@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "802646854363",
+    "project_id": "bakaloo",
+    "storage_bucket": "bakaloo.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:802646854363:android:e903b3cfb80476f6665afe",
+        "android_client_info": {
+          "package_name": "com.grolin.rider"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBJJqvLI-10Smy4kp3OwPX0Ooi46PFhOR8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:802646854363:android:e903b3cfb80476f6665afe",
+        "android_client_info": {
+          "package_name": "com.grolin.rider.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBJJqvLI-10Smy4kp3OwPX0Ooi46PFhOR8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:802646854363:android:e903b3cfb80476f6665afe",
+        "android_client_info": {
+          "package_name": "com.grolin.rider.staging"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBJJqvLI-10Smy4kp3OwPX0Ooi46PFhOR8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

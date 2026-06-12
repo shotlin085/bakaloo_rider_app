@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Grolin Rider — Dev (debug)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "debug",
+      "args": [
+        "--flavor", "dev",
+        "--dart-define=FLAVOR=dev"
+      ]
+    },
+    {
+      "name": "Grolin Rider — Dev (release)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "release",
+      "args": [
+        "--flavor", "dev",
+        "--dart-define=FLAVOR=dev"
+      ]
+    },
+    {
+      "name": "Grolin Rider — Staging (debug)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "debug",
+      "args": [
+        "--flavor", "staging",
+        "--dart-define=FLAVOR=staging"
+      ]
+    },
+    {
+      "name": "Grolin Rider — Prod (release)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "release",
+      "args": [
+        "--flavor", "prod",
+        "--dart-define=FLAVOR=prod"
+      ]
+    }
+  ]
+}
