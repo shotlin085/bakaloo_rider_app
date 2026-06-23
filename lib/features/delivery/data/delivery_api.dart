@@ -93,6 +93,40 @@ enum RejectReason {
   }
 }
 
+/// Reason supplied when a rider cancels a delivery they already
+/// accepted/picked up — e.g. the customer refuses the order at the
+/// door or can't be reached.
+///
+/// Each value maps to the uppercase wire string the live backend
+/// accepts on `PATCH /delivery/orders/:id/cancel`.
+enum CancelDeliveryReason {
+  /// Customer refused to accept the order at the door.
+  customerRefused,
+
+  /// Customer didn't answer calls or the door.
+  customerUnreachable,
+
+  /// Customer wasn't at the delivery address.
+  customerNotHome,
+
+  /// Catch-all when none of the other reasons apply.
+  other;
+
+  /// Wire value (`CUSTOMER_REFUSED`, `CUSTOMER_UNREACHABLE`, …).
+  String get wire {
+    switch (this) {
+      case CancelDeliveryReason.customerRefused:
+        return 'CUSTOMER_REFUSED';
+      case CancelDeliveryReason.customerUnreachable:
+        return 'CUSTOMER_UNREACHABLE';
+      case CancelDeliveryReason.customerNotHome:
+        return 'CUSTOMER_NOT_HOME';
+      case CancelDeliveryReason.other:
+        return 'OTHER';
+    }
+  }
+}
+
 /// Typed error thrown when `toggle-online` fails because the rider
 /// profile is not yet approved.
 ///
@@ -263,6 +297,39 @@ class DeliveryApi {
     );
   }
 
+  /// Cancels a delivery already accepted/picked up — e.g. the customer
+  /// refuses the order or can't be reached at the drop location.
+  ///
+  /// [reason] is the uppercase wire string (`CUSTOMER_REFUSED`,
+  /// `CUSTOMER_UNREACHABLE`, `CUSTOMER_NOT_HOME`, `OTHER`). Callers
+  /// typically use [CancelDeliveryReason.wire] to obtain the value.
+  Future<void> cancelDelivery(String orderId, String reason) async {
+    await _client.patch<Object?>(
+      '/delivery/orders/$orderId/cancel',
+      body: <String, dynamic>{'reason': reason},
+      parseData: (Object? raw) => raw,
+    );
+  }
+
+  /// Regenerates the delivery OTP and re-notifies the customer with the
+  /// new code. Returns the raw response map (`{ deliveryOtp: "1234" }`)
+  /// for dev-flavor diagnostics; the rider never needs to read it since
+  /// the customer reads the code out to them on arrival.
+  Future<Map<String, dynamic>> resendOtp(String orderId) async {
+    final ApiEnvelope<Map<String, dynamic>> envelope =
+        await _client.patch<Map<String, dynamic>>(
+      '/delivery/orders/$orderId/resend-otp',
+      body: const <String, dynamic>{},
+      parseData: (Object? raw) {
+        if (raw is Map) {
+          return Map<String, dynamic>.from(raw);
+        }
+        return const <String, dynamic>{};
+      },
+    );
+    return envelope.data ?? const <String, dynamic>{};
+  }
+
   /// Marks an order as picked up from the store.
   ///
   /// The live backend requires a JSON body (even `{}`).
@@ -325,6 +392,40 @@ class DeliveryApi {
       },
     );
     return envelope.data ?? '';
+  }
+
+  /// Updates the rider's profile fields.
+  ///
+  /// Only non-null parameters are sent in the request body so the
+  /// caller can do a partial update (PATCH semantics). The backend
+  /// returns the full updated [RiderProfile] under `data`.
+  ///
+  /// Editable fields: [name], [vehicleType], [vehicleNumber],
+  /// [bankAccountNumber], [bankIfsc], [bankName].
+  Future<RiderProfile> updateProfile({
+    String? name,
+    String? vehicleType,
+    String? vehicleNumber,
+    String? bankAccountNumber,
+    String? bankIfsc,
+    String? bankName,
+  }) async {
+    final Map<String, dynamic> body = <String, dynamic>{};
+    if (name != null) body['name'] = name;
+    if (vehicleType != null) body['vehicleType'] = vehicleType;
+    if (vehicleNumber != null) body['vehicleNumber'] = vehicleNumber;
+    if (bankAccountNumber != null) body['bankAccountNumber'] = bankAccountNumber;
+    if (bankIfsc != null) body['bankIfsc'] = bankIfsc;
+    if (bankName != null) body['bankName'] = bankName;
+
+    final ApiEnvelope<RiderProfile> envelope =
+        await _client.patch<RiderProfile>(
+      '/delivery/profile',
+      body: body,
+      parseData: (Object? raw) =>
+          RiderProfile.fromJson(_asMap(raw, 'profile')),
+    );
+    return _requireData(envelope, 'profile');
   }
 
   // ---------------------------------------------------------------------------

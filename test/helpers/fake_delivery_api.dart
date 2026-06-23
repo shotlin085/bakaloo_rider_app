@@ -255,6 +255,28 @@ class FakeDeliveryApi implements DeliveryApi {
   }
 
   @override
+  Future<void> cancelDelivery(String orderId, String reason) {
+    throw UnsupportedError('FakeDeliveryApi.cancelDelivery not implemented');
+  }
+
+  @override
+  Future<Map<String, dynamic>> resendOtp(String orderId) {
+    throw UnsupportedError('FakeDeliveryApi.resendOtp not implemented');
+  }
+
+  @override
+  Future<RiderProfile> updateProfile({
+    String? name,
+    String? vehicleType,
+    String? vehicleNumber,
+    String? bankAccountNumber,
+    String? bankIfsc,
+    String? bankName,
+  }) {
+    throw UnsupportedError('FakeDeliveryApi.updateProfile not implemented');
+  }
+
+  @override
   Future<String> uploadProof(String orderId, File file) {
     throw UnsupportedError('FakeDeliveryApi.uploadProof not implemented');
   }

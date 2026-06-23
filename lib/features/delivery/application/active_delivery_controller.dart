@@ -241,6 +241,76 @@ class ActiveDeliveryController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
+  // Resend OTP
+  // ---------------------------------------------------------------------------
+
+  /// Regenerates the delivery OTP and re-notifies the customer with the
+  /// new code via push notification.
+  ///
+  /// Returns `true` on success. The rider never needs to see the new
+  /// code themselves — the customer reads it out on arrival — so this
+  /// only surfaces a boolean for a confirmation snackbar rather than
+  /// the full [DeliveryResult] hierarchy.
+  Future<bool> resendOtp(String orderId) async {
+    final DeliveryRepository? repository = _repository;
+    if (repository == null || _busy) return false;
+    _busy = true;
+    notifyListeners();
+    try {
+      await repository.resendOtp(orderId);
+      return true;
+    } catch (e, stack) {
+      AppLogger.warn(
+        LogTopic.state,
+        'resendOtp($orderId) failed',
+        error: e,
+        stackTrace: stack,
+      );
+      return false;
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cancel delivery (customer refused / unreachable)
+  // ---------------------------------------------------------------------------
+
+  /// Cancels [orderId] when the customer refuses the order at the
+  /// door or can't be reached at the drop location.
+  ///
+  /// Applies the terminal transition `ACCEPTED/IN_TRANSIT ->
+  /// CANCELLED`, emits `order:untrack`, and clears the active delivery
+  /// so the rider can immediately go back online for a new offer.
+  /// Returns `true` on success.
+  Future<bool> cancelDelivery(String orderId, String reason) async {
+    final DeliveryRepository? repository = _repository;
+    if (repository == null || _busy) return false;
+    _busy = true;
+    notifyListeners();
+    try {
+      await repository.cancelDelivery(orderId, reason);
+      _socket?.emit(SocketEvents.orderUntrack, <String, dynamic>{
+        'orderId': orderId,
+      });
+      _onTerminalExternal();
+      return true;
+    } catch (e, stack) {
+      AppLogger.warn(
+        LogTopic.state,
+        'cancelDelivery($orderId) failed',
+        error: e,
+        stackTrace: stack,
+      );
+      return false;
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Deliver via OTP (R14)
   // ---------------------------------------------------------------------------
 

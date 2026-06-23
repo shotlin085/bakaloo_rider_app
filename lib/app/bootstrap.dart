@@ -5,7 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:workmanager/workmanager.dart';
 
+import '../core/background/background_location_task.dart';
 import '../core/config/env.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/utils/app_logger.dart';
@@ -60,6 +62,28 @@ Future<void> bootstrap(AppBuilder builder) async {
       // Initialize Firebase and FCM (fire-and-forget; failures are logged
       // but must not prevent the app from starting).
       unawaited(NotificationService.instance.initialize());
+
+      // Initialize WorkManager so the periodic location heartbeat task
+      // survives app backgrounding / process death on Android 8+.
+      // isInDebugMode=false suppresses the extra WorkManager notification
+      // in release builds; flip to true when diagnosing background-task
+      // scheduling issues.
+      await Workmanager().initialize(
+        callbackDispatcher,
+        isInDebugMode: false,
+      );
+      // Register (or replace) the periodic heartbeat. WorkManager
+      // deduplicates by uniqueName so calling this on every cold-start
+      // is safe — it simply refreshes the existing registration.
+      await Workmanager().registerPeriodicTask(
+        kRiderLocationTaskName,
+        kRiderLocationTaskName,
+        frequency: kRiderLocationTaskInterval,
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+        constraints: Constraints(
+          networkType: NetworkType.connected,
+        ),
+      );
 
       // Resolve and log the active environment so DevTools makes the
       // backend target obvious for QA/demo builds.

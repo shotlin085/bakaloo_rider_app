@@ -21,6 +21,7 @@ Future<T?> showAppBottomSheet<T>(
   double initialChildSize = 0.48,
   List<double> snapSizes = const <double>[0.20, 0.48, 0.82],
   bool isDismissible = true,
+  bool? enableDrag,
 }) {
   assert(
     snapSizes.isNotEmpty,
@@ -35,7 +36,7 @@ Future<T?> showAppBottomSheet<T>(
     context: context,
     isScrollControlled: true,
     isDismissible: isDismissible,
-    enableDrag: isDismissible,
+    enableDrag: enableDrag ?? isDismissible,
     backgroundColor: Colors.transparent,
     barrierColor: AppColors.charcoal.withValues(alpha: 0.4),
     builder: (BuildContext sheetContext) {

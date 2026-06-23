@@ -14,6 +14,7 @@ import '../features/earnings/presentation/payout_history_screen.dart';
 import '../features/history/presentation/delivery_history_screen.dart';
 import '../features/home/presentation/rider_shell.dart';
 import '../features/onboarding/presentation/rider_approval_screen.dart';
+import '../features/profile/presentation/edit_profile_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/profile/presentation/settings_screen.dart';
 import '../core/providers.dart';
@@ -52,6 +53,9 @@ abstract final class AppRoutes {
 
   /// Settings screen.
   static const String settings = '/settings';
+
+  /// Edit profile screen.
+  static const String editProfile = '/edit-profile';
 }
 
 /// Builds the global [GoRouter] used by the app, wired to the
@@ -161,6 +165,11 @@ GoRouter buildAppRouter(WidgetRef ref) {
         path: AppRoutes.settings,
         builder: (BuildContext context, GoRouterState state) =>
             const SettingsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.editProfile,
+        builder: (BuildContext context, GoRouterState state) =>
+            const EditProfileScreen(),
       ),
     ],
   );

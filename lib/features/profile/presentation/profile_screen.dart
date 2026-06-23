@@ -11,6 +11,7 @@ import '../../../shared/widgets/error_state.dart';
 import '../../../shared/widgets/skeleton_loader.dart';
 import '../../auth/application/session_controller.dart';
 import '../../delivery/domain/rider_profile.dart';
+import 'edit_profile_screen.dart';
 
 /// Profile screen showing rider details and navigation to sub-screens.
 ///
@@ -45,6 +46,11 @@ class ProfileScreen extends ConsumerWidget {
           style: AppTypography.heading.copyWith(color: AppColors.charcoal),
         ),
         actions: <Widget>[
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, color: AppColors.charcoal),
+            tooltip: 'Edit profile',
+            onPressed: () => context.push(AppRoutes.editProfile),
+          ),
           IconButton(
             icon: const Icon(
               Icons.settings_outlined,

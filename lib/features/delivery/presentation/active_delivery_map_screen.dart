@@ -22,12 +22,14 @@ import '../../../core/utils/external_nav_launcher.dart';
 import '../../../shared/widgets/app_button.dart';
 import '../application/active_delivery_controller.dart';
 import '../application/active_delivery_map_controller.dart';
+import '../data/delivery_api.dart' show CancelDeliveryReason;
 import '../domain/assignment_status.dart';
 import '../domain/delivery_address.dart';
 import '../domain/delivery_order.dart';
 import '../domain/delivery_outcome.dart';
 import '../domain/store_info.dart';
 import 'camera_director.dart';
+import 'cancel_delivery_sheet.dart';
 import 'completion_summary_sheet.dart';
 import 'delivery_otp_sheet.dart';
 import 'demo_complete_sheet.dart';
@@ -266,34 +268,42 @@ class _ActiveDeliveryMapScreenState
       },
       child: Scaffold(
         backgroundColor: AppColors.white,
-        body: Stack(
+        body: Column(
           children: <Widget>[
-            Positioned.fill(
-              child: _MapLayer(
-                order: order,
-                mapController: _mapController,
-                onMapReady: () {
-                  _mapReady = true;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    unawaited(_maybeAutoFit());
-                  });
-                },
-                onUserPan: _onUserPan,
+            // Map + overlay controls fill all available space above the panel.
+            Expanded(
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
+                    child: _MapLayer(
+                      order: order,
+                      mapController: _mapController,
+                      onMapReady: () {
+                        _mapReady = true;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          unawaited(_maybeAutoFit());
+                        });
+                      },
+                      onUserPan: _onUserPan,
+                    ),
+                  ),
+                  Positioned(
+                    top: MediaQuery.viewPaddingOf(context).top + 12,
+                    left: 16,
+                    right: 16,
+                    child: _NavTopBar(status: order.assignmentStatus),
+                  ),
+                  // Floating recenter button — bottom-right, clear of panel.
+                  Positioned(
+                    right: 16,
+                    bottom: 16,
+                    child: _RecenterButton(onPressed: _onRecenterPressed),
+                  ),
+                ],
               ),
             ),
-            Positioned(
-              top: MediaQuery.viewPaddingOf(context).top + 12,
-              left: 16,
-              right: 16,
-              child: _NavTopBar(status: order.assignmentStatus),
-            ),
-            // Floating recenter / route-info actions.
-            Positioned(
-              right: 16,
-              bottom: 256,
-              child: _RecenterButton(onPressed: _onRecenterPressed),
-            ),
-            _BottomSheetLayer(order: order),
+            // Fixed step-action panel anchored to the bottom.
+            _StepActionPanel(order: order),
           ],
         ),
       ),
@@ -597,100 +607,163 @@ class _ActiveDeliveryGoneScreen extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// DraggableScrollableSheet bottom layer
+// Fixed step-action panel (replaces DraggableScrollableSheet)
 // ---------------------------------------------------------------------------
 
-class _BottomSheetLayer extends StatelessWidget {
-  const _BottomSheetLayer({required this.order});
+/// A fixed panel anchored to the bottom of the screen that shows the
+/// current delivery step and the primary CTA for that step.
+///
+/// Layout (top → bottom inside the panel):
+///   • Step progress bar — pill showing ACCEPTED → IN_TRANSIT → DELIVERED
+///   • Order header  — order number + rider earning
+///   • Phase body    — address card + action buttons for the current step
+///   • Bottom safe-area inset
+class _StepActionPanel extends StatelessWidget {
+  const _StepActionPanel({required this.order});
 
   final DeliveryOrder order;
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.48,
-      minChildSize: 0.20,
-      maxChildSize: 0.82,
-      snap: true,
-      snapSizes: const <double>[0.20, 0.48, 0.82],
-      builder: (BuildContext context, ScrollController controller) {
-        return ClipRRect(
-          borderRadius: const BorderRadius.vertical(
-            top: Radius.circular(28),
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Color(0x1A000000),
+            blurRadius: 20,
+            offset: Offset(0, -4),
           ),
-          child: ColoredBox(
-            color: AppColors.white,
-            child: SingleChildScrollView(
-              controller: controller,
-              child: _SheetContents(order: order),
-            ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const SizedBox(height: 12),
+          _StepProgressBar(status: order.assignmentStatus),
+          _PanelHeader(order: order),
+          _PhaseBody(order: order),
+          SizedBox(
+            height: MediaQuery.viewPaddingOf(context).bottom + 16,
           ),
-        );
-      },
-    );
-  }
-}
-
-class _SheetContents extends ConsumerWidget {
-  const _SheetContents({required this.order});
-
-  final DeliveryOrder order;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final bool customerApprox = ref.watch<ActiveDeliveryMapController>(
-      activeDeliveryMapControllerProvider,
-    ).customerLocationApproximate;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        const _SheetHandle(),
-        _SheetHeader(order: order),
-        if (order.assignmentStatus == AssignmentStatus.inTransit &&
-            customerApprox)
-          const _ApproximateLocationBanner(),
-        const SizedBox(height: 8),
-        _PhaseBody(order: order),
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-}
-
-class _SheetHandle extends StatelessWidget {
-  const _SheetHandle();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.only(top: 8, bottom: 4),
-      child: Center(
-        child: SizedBox(
-          width: 40,
-          height: 4,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.all(Radius.circular(2)),
-            ),
-          ),
-        ),
+        ],
       ),
     );
   }
 }
 
-class _SheetHeader extends StatelessWidget {
-  const _SheetHeader({required this.order});
+/// Three-step progress pill: Pickup → Deliver → Done.
+class _StepProgressBar extends StatelessWidget {
+  const _StepProgressBar({required this.status});
+
+  final AssignmentStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool pickupDone = status == AssignmentStatus.inTransit ||
+        status == AssignmentStatus.delivered;
+    final bool deliverDone = status == AssignmentStatus.delivered;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        children: <Widget>[
+          _StepDot(
+            active: true,
+            done: pickupDone,
+            label: 'Pickup',
+          ),
+          Expanded(child: _StepLine(active: pickupDone)),
+          _StepDot(
+            active: pickupDone,
+            done: deliverDone,
+            label: 'Deliver',
+          ),
+          Expanded(child: _StepLine(active: deliverDone)),
+          _StepDot(
+            active: deliverDone,
+            done: deliverDone,
+            label: 'Done',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepDot extends StatelessWidget {
+  const _StepDot({
+    required this.active,
+    required this.done,
+    required this.label,
+  });
+
+  final bool active;
+  final bool done;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color dotColor = done
+        ? AppColors.success
+        : active
+            ? AppColors.black
+            : AppColors.border;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: dotColor,
+            shape: BoxShape.circle,
+          ),
+          child: done
+              ? const Icon(Icons.check, size: 12, color: AppColors.white)
+              : null,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: AppTypography.micro.copyWith(
+            color: active ? AppColors.charcoal : AppColors.muted,
+            fontWeight:
+                active ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StepLine extends StatelessWidget {
+  const _StepLine({required this.active});
+
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 2,
+      margin: const EdgeInsets.only(bottom: 16),
+      color: active ? AppColors.success : AppColors.border,
+    );
+  }
+}
+
+class _PanelHeader extends StatelessWidget {
+  const _PanelHeader({required this.order});
 
   final DeliveryOrder order;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+      padding: const EdgeInsets.fromLTRB(20, 12, 8, 4),
       child: Row(
         children: <Widget>[
           Expanded(
@@ -704,7 +777,8 @@ class _SheetHeader extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '₹${order.riderEarning.toStringAsFixed(0)}',
-                  style: AppTypography.title.copyWith(color: AppColors.black),
+                  style:
+                      AppTypography.title.copyWith(color: AppColors.black),
                 ),
               ],
             ),
@@ -712,15 +786,14 @@ class _SheetHeader extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.close, color: AppColors.charcoal),
             tooltip: 'Back to home',
-            onPressed: () {
-              context.go(AppRoutes.home);
-            },
+            onPressed: () => context.go(AppRoutes.home),
           ),
         ],
       ),
     );
   }
 }
+
 
 class _ApproximateLocationBanner extends StatelessWidget {
   const _ApproximateLocationBanner();
@@ -751,24 +824,37 @@ class _ApproximateLocationBanner extends StatelessWidget {
   }
 }
 
-class _PhaseBody extends StatelessWidget {
+class _PhaseBody extends ConsumerWidget {
   const _PhaseBody({required this.order});
 
   final DeliveryOrder order;
 
   @override
-  Widget build(BuildContext context) {
-    switch (order.assignmentStatus) {
-      case AssignmentStatus.assigned:
-      case AssignmentStatus.accepted:
-        return _AcceptedSheet(order: order);
-      case AssignmentStatus.inTransit:
-        return _InTransitSheet(order: order);
-      case AssignmentStatus.delivered:
-        return _DeliveredSheet(order: order);
-      case AssignmentStatus.cancelled:
-        return const SizedBox.shrink();
-    }
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool customerApprox = ref.watch<ActiveDeliveryMapController>(
+      activeDeliveryMapControllerProvider,
+    ).customerLocationApproximate;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          if (order.assignmentStatus == AssignmentStatus.inTransit &&
+              customerApprox)
+            const _ApproximateLocationBanner(),
+          switch (order.assignmentStatus) {
+            AssignmentStatus.assigned ||
+            AssignmentStatus.accepted =>
+              _AcceptedSheet(order: order),
+            AssignmentStatus.inTransit => _InTransitSheet(order: order),
+            AssignmentStatus.delivered => _DeliveredSheet(order: order),
+            AssignmentStatus.cancelled => const SizedBox.shrink(),
+          },
+        ],
+      ),
+    );
   }
 }
 
@@ -904,6 +990,14 @@ class _InTransitSheet extends ConsumerWidget {
               ),
             ),
           ],
+          const SizedBox(height: 4),
+          TextButton(
+            onPressed: () => _onCancelDelivery(context, ref),
+            child: Text(
+              'Cancel delivery',
+              style: AppTypography.label.copyWith(color: AppColors.danger),
+            ),
+          ),
         ],
       ),
     );
@@ -949,6 +1043,27 @@ class _InTransitSheet extends ConsumerWidget {
         return;
       case DeliveryOutcomeFailed(message: final String message):
         messenger?.showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  /// Cancels the delivery when the customer refuses the order or can't
+  /// be reached at the drop location. Once the controller clears the
+  /// active delivery, the screen-level watcher auto-redirects to home.
+  Future<void> _onCancelDelivery(BuildContext context, WidgetRef ref) async {
+    final CancelDeliveryReason? reason = await showCancelDeliverySheet(context);
+    if (reason == null) return;
+    if (!context.mounted) return;
+
+    final ScaffoldMessengerState? messenger =
+        ScaffoldMessenger.maybeOf(context);
+    final ActiveDeliveryController controller =
+        ref.read<ActiveDeliveryController>(activeDeliveryControllerProvider);
+    final bool cancelled =
+        await controller.cancelDelivery(order.orderId, reason.wire);
+    if (!cancelled) {
+      messenger?.showSnackBar(
+        const SnackBar(content: Text('Could not cancel delivery. Try again')),
+      );
     }
   }
 }

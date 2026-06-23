@@ -96,6 +96,29 @@ class DeliveryRepository {
     }
   }
 
+  /// Cancels a delivery already accepted/picked up.
+  ///
+  /// [reason] is the uppercase wire string. Callers typically use
+  /// [CancelDeliveryReason.wire] to obtain the value.
+  Future<void> cancelDelivery(String orderId, String reason) async {
+    try {
+      await _api.cancelDelivery(orderId, reason);
+    } on ApiException catch (e, stack) {
+      _logAndTranslate('cancelDelivery', orderId, e, stack);
+      rethrow;
+    }
+  }
+
+  /// Regenerates the delivery OTP and re-notifies the customer.
+  Future<void> resendOtp(String orderId) async {
+    try {
+      await _api.resendOtp(orderId);
+    } on ApiException catch (e, stack) {
+      _logAndTranslate('resendOtp', orderId, e, stack);
+      rethrow;
+    }
+  }
+
   /// Marks an order as picked up from the store.
   Future<void> markPickedUp(String orderId) async {
     try {

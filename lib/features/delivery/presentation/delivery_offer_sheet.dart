@@ -64,9 +64,18 @@ Future<OfferSheetResult> showDeliveryOfferSheet(
   BuildContext context,
   DeliveryOrder order,
 ) async {
+  // Fixed-height sheet (no drag-to-resize): the offer body scrolls
+  // internally via its own SingleChildScrollView, so a draggable snap
+  // range isn't needed. A fast drag against the snap-animated
+  // DraggableScrollableSheet here was observed to corrupt the element
+  // tree (Flutter framework assertion in _InactiveElements._unmount),
+  // the same class of issue the active-delivery screen avoided by
+  // dropping its DraggableScrollableSheet for a fixed panel.
   final OfferSheetResult? result = await showAppBottomSheet<OfferSheetResult>(
     context,
-    initialChildSize: 0.48,
+    initialChildSize: 0.6,
+    snapSizes: const <double>[0.6],
+    enableDrag: false,
     builder: (BuildContext sheetContext) =>
         _DeliveryOfferSheetBody(order: order),
   );

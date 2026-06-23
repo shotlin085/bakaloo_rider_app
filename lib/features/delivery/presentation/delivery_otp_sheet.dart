@@ -50,9 +50,18 @@ Future<DeliveryOutcome> showDeliveryOtpSheet(
   DeliveryOrder order, {
   ProofImagePicker imagePicker = defaultProofImagePicker,
 }) async {
+  // Fixed-height sheet (no drag-to-resize): the OTP field autofocuses
+  // and brings up the keyboard immediately, and a drag-snap-animated
+  // DraggableScrollableSheet fighting that keyboard resize was
+  // observed to leave the "Verify & deliver" button visually present
+  // but not hit-testable (same class of issue documented in
+  // delivery_offer_sheet.dart and the post-accept panel — both fixed
+  // by pinning to one fixed snap size with dragging disabled).
   final DeliveryOutcome? result = await showAppBottomSheet<DeliveryOutcome>(
     context,
     initialChildSize: 0.82,
+    snapSizes: const <double>[0.82],
+    enableDrag: false,
     builder: (BuildContext sheetContext) => _DeliveryOtpSheetBody(
       order: order,
       imagePicker: imagePicker,
@@ -174,6 +183,25 @@ class _DeliveryOtpSheetBodyState
     }
   }
 
+  Future<void> _onResendOtp() async {
+    final ActiveDeliveryController controller =
+        ref.read<ActiveDeliveryController>(activeDeliveryControllerProvider);
+    final ScaffoldMessengerState? messenger = ScaffoldMessenger.maybeOf(context);
+
+    final bool sent = await controller.resendOtp(widget.order.orderId);
+    if (!mounted) return;
+
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(
+          sent
+              ? 'New OTP sent to the customer'
+              : 'Could not resend OTP. Try again',
+        ),
+      ),
+    );
+  }
+
   void _onUseProofInstead() {
     setState(() {
       _phase = _Phase.proof;
@@ -285,9 +313,15 @@ class _DeliveryOtpSheetBodyState
           autofocus: true,
           maxLength: AppConstants.deliveryOtpLength,
           onChanged: (_) {
-            if (_inlineError != null) {
-              setState(() => _inlineError = null);
-            }
+            // Unconditional setState: _otpComplete reads
+            // _otpController.text directly, so the "Verify & deliver"
+            // button only re-evaluates its enabled state when this
+            // widget rebuilds. Without this, typing the OTP did
+            // nothing visible — the button stayed grey until some
+            // unrelated rebuild happened to fire (e.g. a periodic
+            // rider-location update), making it look broken/unpressable
+            // for an unpredictable stretch after every keystroke.
+            setState(() => _inlineError = null);
           },
           onSubmitted: (_) {
             if (_otpComplete && !busy) {
@@ -297,7 +331,18 @@ class _DeliveryOtpSheetBodyState
           errorText: _inlineError,
           enabled: !busy,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: busy ? null : () => unawaited(_onResendOtp()),
+            child: Text(
+              'Resend OTP',
+              style: AppTypography.label.copyWith(color: AppColors.charcoal),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         AppButton(
           label: 'Verify & deliver',
           isLoading: busy,
