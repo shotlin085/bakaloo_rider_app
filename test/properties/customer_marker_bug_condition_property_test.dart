@@ -19,13 +19,13 @@
 
 import 'package:glados/glados.dart';
 
-import 'package:grolin_rider_app/core/maps/geo_point.dart';
-import 'package:grolin_rider_app/core/maps/marker_assets.dart';
-import 'package:grolin_rider_app/features/delivery/application/active_delivery_map_controller.dart';
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_item.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_order.dart';
+import 'package:bakaloo_rider_app/core/maps/geo_point.dart';
+import 'package:bakaloo_rider_app/core/maps/marker_assets.dart';
+import 'package:bakaloo_rider_app/features/delivery/application/active_delivery_map_controller.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_item.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_order.dart';
 
 DeliveryOrder _orderWithNullCustomerCoords({
   required AssignmentStatus status,

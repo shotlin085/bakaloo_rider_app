@@ -1,7 +1,7 @@
 import 'package:glados/glados.dart';
 
-import 'package:grolin_rider_app/features/delivery/application/assignment_state_machine.dart';
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/application/assignment_state_machine.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
 
 /// Feature: grolin-rider-app, Property 2:
 /// Assignment_Status traces are monotonic walks on the allowed

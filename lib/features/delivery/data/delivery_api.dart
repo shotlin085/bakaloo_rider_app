@@ -8,6 +8,7 @@ import '../../../core/network/api_exception.dart';
 import '../domain/delivery_history_entry.dart';
 import '../domain/delivery_order.dart';
 import '../domain/payout.dart';
+import '../domain/pickup_batch.dart';
 import '../domain/rider_earnings.dart';
 import '../domain/rider_profile.dart';
 import '../domain/rider_stats.dart';
@@ -311,23 +312,48 @@ class DeliveryApi {
     );
   }
 
-  /// Regenerates the delivery OTP and re-notifies the customer with the
-  /// new code. Returns the raw response map (`{ deliveryOtp: "1234" }`)
-  /// for dev-flavor diagnostics; the rider never needs to read it since
-  /// the customer reads the code out to them on arrival.
-  Future<Map<String, dynamic>> resendOtp(String orderId) async {
-    final ApiEnvelope<Map<String, dynamic>> envelope =
-        await _client.patch<Map<String, dynamic>>(
-      '/delivery/orders/$orderId/resend-otp',
-      body: const <String, dynamic>{},
-      parseData: (Object? raw) {
-        if (raw is Map) {
-          return Map<String, dynamic>.from(raw);
-        }
-        return const <String, dynamic>{};
-      },
+  /// Verifies a scanned invoice QR pickup code.
+  ///
+  /// [payload] is the decoded QR content (`{token, v, sig}`) sent back
+  /// verbatim as the request body — the QR carries no order/assignment
+  /// id at all, so there's no `:id` in this route; the backend resolves
+  /// which order this is from the token itself and returns it as
+  /// `orderId` in the response. The backend re-validates the signature,
+  /// token status, and rider ownership itself. Returns the price-free
+  /// pickup checklist on success. Rejections surface as [ApiException]
+  /// with a specific `backendCode` (`INVALID_SIGNATURE`, `TOKEN_EXPIRED`,
+  /// `WRONG_RIDER`, `ALREADY_VERIFIED`, etc.) and a rider-readable
+  /// `message` the caller can show verbatim.
+  Future<PickupVerification> verifyScan(Map<String, dynamic> payload) async {
+    final ApiEnvelope<PickupVerification> envelope =
+        await _client.post<PickupVerification>(
+      '/delivery/pickup-tokens/verify',
+      body: payload,
+      parseData: (Object? raw) =>
+          PickupVerification.fromJson(_asMap(raw, 'verify-scan')),
     );
-    return envelope.data ?? const <String, dynamic>{};
+    return _requireData(envelope, 'verify-scan');
+  }
+
+  /// Re-fetches the checklist for [orderId] when this rider already
+  /// scanned it successfully (token VERIFIED) but hasn't confirmed
+  /// pickup yet — the recovery path for a killed/restarted app, a
+  /// second device, or the checklist sheet having closed early. Cannot
+  /// be used to (re-)verify a QR; the token was already claimed by the
+  /// original scan and there's nothing left to claim.
+  ///
+  /// Throws [ApiException] with `backendCode == 'NO_PENDING_CHECKLIST'`
+  /// (HTTP 404) when there's no VERIFIED-but-unconsumed token for this
+  /// order under this rider — i.e. it was genuinely never scanned, or
+  /// pickup was already confirmed.
+  Future<PickupVerification> getPendingChecklist(String orderId) async {
+    final ApiEnvelope<PickupVerification> envelope =
+        await _client.get<PickupVerification>(
+      '/delivery/orders/$orderId/pending-checklist',
+      parseData: (Object? raw) =>
+          PickupVerification.fromJson(_asMap(raw, 'pending-checklist')),
+    );
+    return _requireData(envelope, 'pending-checklist');
   }
 
   /// Marks an order as picked up from the store.
@@ -341,25 +367,26 @@ class DeliveryApi {
     );
   }
 
-  /// Marks an order as delivered.
-  ///
-  /// Exactly one of [otp], [proofPhotoUrl], or [demoMode] should be
-  /// provided:
-  /// - [otp]: primary OTP-based completion.
+  /// Marks an order as delivered — direct completion by default (no
+  /// verification step). [proofPhotoUrl] and [demoMode] remain as
+  /// alternate completion paths:
+  /// - (none): direct completion.
   /// - [proofPhotoUrl]: proof-photo fallback (URL from [uploadProof]).
   /// - [demoMode]: dev-only demo completion. Pass `true` to enable;
   ///   `null` (default) omits the field entirely so production builds
   ///   never accidentally send `demoMode: false`.
   Future<void> markDelivered(
     String orderId, {
-    String? otp,
     String? proofPhotoUrl,
     bool? demoMode,
+    double? cashCollected,
+    double? upiCollected,
   }) async {
     final Map<String, dynamic> body = <String, dynamic>{};
-    if (otp != null) body['otp'] = otp;
     if (proofPhotoUrl != null) body['proofPhotoUrl'] = proofPhotoUrl;
     if (demoMode != null) body['demoMode'] = demoMode;
+    if (cashCollected != null) body['cashCollected'] = cashCollected;
+    if (upiCollected != null) body['upiCollected'] = upiCollected;
 
     await _client.patch<Object?>(
       '/delivery/orders/$orderId/deliver',

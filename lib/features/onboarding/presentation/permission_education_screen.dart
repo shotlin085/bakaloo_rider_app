@@ -132,7 +132,7 @@ class _PermissionEducationScreenState
 
               // Body copy (R6.3, R29.1)
               Text(
-                "Grolin needs your location while you're on shift to deliver "
+                "Bakaloo needs your location while you're on shift to deliver "
                 "orders to nearby riders. We only collect location while the "
                 "app is open and you're online.",
                 style: AppTypography.body.copyWith(color: AppColors.muted),
@@ -161,7 +161,7 @@ class _PermissionEducationScreenState
                       Expanded(
                         child: Text(
                           'Location permission is turned off. Open settings '
-                          'to allow location access for Grolin.',
+                          'to allow location access for Bakaloo.',
                           style: AppTypography.micro
                               .copyWith(color: AppColors.muted),
                         ),

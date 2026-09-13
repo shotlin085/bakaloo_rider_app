@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Grolin Rider — Dev (debug)",
+      "name": "Bakaloo Rider — Dev (debug)",
       "request": "launch",
       "type": "dart",
       "flutterMode": "debug",
@@ -12,7 +12,7 @@
       ]
     },
     {
-      "name": "Grolin Rider — Dev (release)",
+      "name": "Bakaloo Rider — Dev (release)",
       "request": "launch",
       "type": "dart",
       "flutterMode": "release",
@@ -22,7 +22,7 @@
       ]
     },
     {
-      "name": "Grolin Rider — Staging (debug)",
+      "name": "Bakaloo Rider — Staging (debug)",
       "request": "launch",
       "type": "dart",
       "flutterMode": "debug",
@@ -32,7 +32,7 @@
       ]
     },
     {
-      "name": "Grolin Rider — Prod (release)",
+      "name": "Bakaloo Rider — Prod (release)",
       "request": "launch",
       "type": "dart",
       "flutterMode": "release",

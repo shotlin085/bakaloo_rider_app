@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 
-/// Wraps the standard envelope returned by every Grolin REST endpoint.
+/// Wraps the standard envelope returned by every Bakaloo REST endpoint.
 ///
 /// The live backend always responds with:
 ///

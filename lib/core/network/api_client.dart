@@ -9,7 +9,7 @@ import 'retry_interceptor.dart';
 
 /// Singleton wrapper around a configured [Dio] instance.
 ///
-/// `ApiClient` is the only place that knows the live Grolin REST base
+/// `ApiClient` is the only place that knows the live Bakaloo REST base
 /// URL. Every feature-level API client (`AuthApi`, `DeliveryApi`, etc.)
 /// receives an [ApiClient] via its constructor and calls into [request]
 /// instead of using Dio directly.

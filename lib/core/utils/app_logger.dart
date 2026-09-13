@@ -29,7 +29,10 @@ enum LogTopic {
   boot('BOOT'),
 
   /// Firebase Cloud Messaging — token, permissions, foreground messages.
-  notifications('NOTIF');
+  notifications('NOTIF'),
+
+  /// QR pickup scanning and multi-order batch lifecycle.
+  delivery('DELIVERY');
 
   const LogTopic(this.tag);
 

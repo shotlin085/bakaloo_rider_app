@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/features/auth/domain/auth_session.dart';
-import 'package:grolin_rider_app/features/auth/domain/rider_user.dart';
+import 'package:bakaloo_rider_app/features/auth/domain/auth_session.dart';
+import 'package:bakaloo_rider_app/features/auth/domain/rider_user.dart';
 
 void main() {
   group('RiderUser.fromJson', () {

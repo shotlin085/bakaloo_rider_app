@@ -1,4 +1,4 @@
-import 'package:grolin_rider_app/core/utils/external_nav_launcher.dart';
+import 'package:bakaloo_rider_app/core/utils/external_nav_launcher.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// A captured `launch` call recorded by [RecordingUrlLauncher].

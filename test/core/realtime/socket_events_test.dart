@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/realtime/socket_events.dart';
+import 'package:bakaloo_rider_app/core/realtime/socket_events.dart';
 
 /// Trivial constant-value tests for [SocketEvents].
 ///

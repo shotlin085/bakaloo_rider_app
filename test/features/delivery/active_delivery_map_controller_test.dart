@@ -1,29 +1,32 @@
 import 'package:flutter_map/flutter_map.dart' as fm;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/core/maps/geo_point.dart';
-import 'package:grolin_rider_app/core/maps/marker_assets.dart';
-import 'package:grolin_rider_app/features/delivery/application/active_delivery_map_controller.dart';
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_item.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_order.dart';
-import 'package:grolin_rider_app/features/delivery/domain/store_info.dart';
+import 'package:bakaloo_rider_app/core/maps/geo_point.dart';
+import 'package:bakaloo_rider_app/core/maps/marker_assets.dart';
+import 'package:bakaloo_rider_app/features/delivery/application/active_delivery_map_controller.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_item.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_order.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/store_info.dart';
 
 DeliveryOrder _order({
   required AssignmentStatus status,
+  String orderId = 'order-1',
+  bool quickDeliverySelected = false,
   double? storeLat,
   double? storeLng,
   double? customerLat,
   double? customerLng,
 }) {
   return DeliveryOrder(
-    orderId: 'order-1',
-    orderNumber: 'ORD-001',
+    orderId: orderId,
+    orderNumber: orderId,
     assignmentStatus: status,
     totalAmount: 100,
     paymentMethod: 'COD',
     riderEarning: 50,
     estimatedDuration: 12,
+    quickDeliverySelected: quickDeliverySelected,
     customerAddress: DeliveryAddress(
       name: 'Customer',
       address: 'Drop addr',
@@ -224,6 +227,271 @@ void main() {
       // Polyline first endpoint follows the rider.
       expect(controller.polylines.last.points.first.latitude, 12.951);
       expect(controller.polylines.last.points.first.longitude, 77.601);
+    });
+  });
+
+  group('ActiveDeliveryMapController.stops (item 8/9: multi-stop map)', () {
+    test('empty when applyOrder is called without a batch', () {
+      final ActiveDeliveryMapController controller = _newController();
+      controller.updateRiderPosition(const GeoPoint(12.95, 77.60));
+      controller.applyOrder(
+        _order(status: AssignmentStatus.inTransit, customerLat: 12.93, customerLng: 77.62),
+        null,
+      );
+
+      expect(controller.stops, isEmpty);
+    });
+
+    test(
+      'ranks every in-transit batch order by distance, including the focused one',
+      () {
+        final ActiveDeliveryMapController controller = _newController();
+        controller.updateRiderPosition(const GeoPoint(12.95, 77.60));
+
+        final DeliveryOrder focused = _order(
+          orderId: 'near',
+          status: AssignmentStatus.inTransit,
+          customerLat: 12.951,
+          customerLng: 77.601, // very close
+        );
+        final DeliveryOrder farther = _order(
+          orderId: 'far',
+          status: AssignmentStatus.inTransit,
+          customerLat: 12.20,
+          customerLng: 78.20, // far away
+        );
+
+        controller.applyOrder(
+          focused,
+          null,
+          batch: <DeliveryOrder>[focused, farther],
+        );
+
+        expect(controller.stops, hasLength(2));
+        expect(controller.stops[0].order.orderId, 'near');
+        expect(controller.stops[0].rank, 1);
+        expect(controller.stops[0].isFocused, isTrue);
+        expect(controller.stops[1].order.orderId, 'far');
+        expect(controller.stops[1].rank, 2);
+        expect(controller.stops[1].isFocused, isFalse);
+        expect(controller.stops[1].distanceMeters, greaterThan(controller.stops[0].distanceMeters!));
+      },
+    );
+
+    test('excludes batch orders that are not in-transit yet', () {
+      final ActiveDeliveryMapController controller = _newController();
+      controller.updateRiderPosition(const GeoPoint(12.95, 77.60));
+
+      final DeliveryOrder focused = _order(
+        orderId: 'in-transit',
+        status: AssignmentStatus.inTransit,
+        customerLat: 12.951,
+        customerLng: 77.601,
+      );
+      final DeliveryOrder stillAtStore = _order(
+        orderId: 'accepted',
+        status: AssignmentStatus.accepted,
+        customerLat: 12.20,
+        customerLng: 78.20,
+      );
+
+      controller.applyOrder(
+        focused,
+        null,
+        batch: <DeliveryOrder>[focused, stillAtStore],
+      );
+
+      expect(controller.stops, hasLength(1));
+      expect(controller.stops.single.order.orderId, 'in-transit');
+    });
+
+    test('other-stop markers appear alongside the rider/customer markers', () {
+      final ActiveDeliveryMapController controller = _newController();
+      controller.updateRiderPosition(const GeoPoint(12.95, 77.60));
+
+      final DeliveryOrder focused = _order(
+        orderId: 'near',
+        status: AssignmentStatus.inTransit,
+        customerLat: 12.951,
+        customerLng: 77.601,
+      );
+      final DeliveryOrder farther = _order(
+        orderId: 'far',
+        status: AssignmentStatus.inTransit,
+        customerLat: 12.20,
+        customerLng: 78.20,
+      );
+
+      controller.applyOrder(
+        focused,
+        null,
+        batch: <DeliveryOrder>[focused, farther],
+      );
+
+      expect(controller.markers.containsKey('rider'), isTrue);
+      expect(controller.markers.containsKey('customer'), isTrue);
+      expect(controller.markers.containsKey('stop:far'), isTrue);
+      // The focused order's own destination is rendered via the
+      // 'customer' key, not a duplicate numbered stop marker.
+      expect(controller.markers.containsKey('stop:near'), isFalse);
+    });
+
+    test('re-ranks stops as the rider moves, without changing focus', () {
+      final ActiveDeliveryMapController controller = _newController();
+      controller.updateRiderPosition(const GeoPoint(12.95, 77.60));
+
+      final DeliveryOrder focused = _order(
+        orderId: 'a',
+        status: AssignmentStatus.inTransit,
+        customerLat: 12.951,
+        customerLng: 77.601,
+      );
+      final DeliveryOrder other = _order(
+        orderId: 'b',
+        status: AssignmentStatus.inTransit,
+        customerLat: 12.20,
+        customerLng: 78.20,
+      );
+
+      controller.applyOrder(focused, null, batch: <DeliveryOrder>[focused, other]);
+      expect(controller.stops[0].order.orderId, 'a');
+
+      // Rider drives far past 'a' towards 'b' — 'b' should now rank closer,
+      // but the focused destination (still 'a', from applyOrder) is unchanged.
+      controller.updateRiderPosition(const GeoPoint(12.30, 78.10));
+
+      expect(controller.stops[0].order.orderId, 'b');
+      expect(controller.stops.firstWhere((s) => s.isFocused).order.orderId, 'a');
+    });
+
+    test(
+      'ranks a 3-stop batch by real cascading nearest-neighbor, not flat '
+      'distance from the rider',
+      () {
+        // Same hand-verified geometry as DeliveryOrder.sequenceRoute's test:
+        // flat distance-from-rider would rank B before C, but the route
+        // must chain through each stop — from A, C is the nearer next hop.
+        final ActiveDeliveryMapController controller = _newController();
+        controller.updateRiderPosition(const GeoPoint(1.00, 1.00));
+
+        final DeliveryOrder a = _order(
+          orderId: 'a',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.01,
+          customerLng: 1.00,
+        );
+        final DeliveryOrder b = _order(
+          orderId: 'b',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.01,
+          customerLng: 1.05,
+        );
+        final DeliveryOrder c = _order(
+          orderId: 'c',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.052,
+          customerLng: 1.00,
+        );
+
+        controller.applyOrder(a, null, batch: <DeliveryOrder>[b, c, a]);
+
+        expect(
+          controller.stops.map((s) => s.order.orderId).toList(),
+          <String>['a', 'c', 'b'],
+        );
+      },
+    );
+
+    test(
+      'the map polyline covers the whole planned route, not just the next hop',
+      () {
+        final ActiveDeliveryMapController controller = _newController();
+        controller.updateRiderPosition(const GeoPoint(1.00, 1.00));
+
+        final DeliveryOrder a = _order(
+          orderId: 'a',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.01,
+          customerLng: 1.00,
+        );
+        final DeliveryOrder c = _order(
+          orderId: 'c',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.052,
+          customerLng: 1.00,
+        );
+        final DeliveryOrder b = _order(
+          orderId: 'b',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.01,
+          customerLng: 1.05,
+        );
+
+        controller.applyOrder(a, null, batch: <DeliveryOrder>[a, b, c]);
+
+        // Route order is a -> c -> b (see the cascading-order test above).
+        // Before OSRM resolves, each leg is a straight-line placeholder, so
+        // the concatenated polyline should visit rider, a, c, b in order.
+        final fm.Polyline route = controller.polylines.last;
+        expect(route.points[0].latitude, 1.00); // rider
+        expect(route.points[1].latitude, 1.01); // a
+        expect(route.points[2].latitude, 1.052); // c
+        expect(route.points[3].latitude, 1.01); // b
+        expect(route.points[3].longitude, 1.05);
+      },
+    );
+
+    test(
+      'distance/ETA reflect only the immediate next leg, not the whole route',
+      () {
+        final ActiveDeliveryMapController controller = _newController();
+        controller.updateRiderPosition(const GeoPoint(1.00, 1.00));
+
+        final DeliveryOrder a = _order(
+          orderId: 'a',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.01,
+          customerLng: 1.00,
+        );
+        final DeliveryOrder b = _order(
+          orderId: 'b',
+          status: AssignmentStatus.inTransit,
+          customerLat: 1.01,
+          customerLng: 1.05,
+        );
+
+        controller.applyOrder(a, null, batch: <DeliveryOrder>[a, b]);
+
+        // Leg 1 (rider -> a) is ~1.1 km; the full trip through b is much
+        // longer. The stat must reflect only the next hop.
+        expect(controller.distanceMeters, isNotNull);
+        expect(controller.distanceMeters, lessThan(2000));
+      },
+    );
+
+    test('phaseBounds encompasses every planned stop, not just the first', () {
+      final ActiveDeliveryMapController controller = _newController();
+      controller.updateRiderPosition(const GeoPoint(1.00, 1.00));
+
+      final DeliveryOrder a = _order(
+        orderId: 'a',
+        status: AssignmentStatus.inTransit,
+        customerLat: 1.01,
+        customerLng: 1.00,
+      );
+      final DeliveryOrder b = _order(
+        orderId: 'b',
+        status: AssignmentStatus.inTransit,
+        customerLat: 1.01,
+        customerLng: 1.05,
+      );
+
+      controller.applyOrder(a, null, batch: <DeliveryOrder>[a, b]);
+
+      expect(controller.phaseBounds, isNotNull);
+      // b's longitude (1.05) is the farthest east point in the plan — the
+      // bounds must stretch out to it, not stop at a's 1.00.
+      expect(controller.phaseBounds!.northeast.longitude, greaterThanOrEqualTo(1.05));
     });
   });
 }

@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/theme/app_theme.dart';
-import 'package:grolin_rider_app/features/auth/presentation/splash_screen.dart';
+import 'package:bakaloo_rider_app/core/theme/app_theme.dart';
+import 'package:bakaloo_rider_app/features/auth/presentation/splash_screen.dart';
 
 /// Smoke test that the splash screen renders inside a ProviderScope.
 ///
@@ -11,7 +11,7 @@ import 'package:grolin_rider_app/features/auth/presentation/splash_screen.dart';
 /// router, because the router redirect awaits the live SessionController
 /// resolving against the backend; that's covered by integration tests.
 void main() {
-  testWidgets('Splash screen renders the Grolin Rider title',
+  testWidgets('Splash screen renders the Bakaloo Rider title',
       (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -22,7 +22,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Grolin Rider'), findsOneWidget);
+    expect(find.text('Bakaloo Rider'), findsOneWidget);
     expect(find.text('Setting things up…'), findsOneWidget);
   });
 }

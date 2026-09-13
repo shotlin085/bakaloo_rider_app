@@ -5,7 +5,7 @@ import 'flavor.dart';
 /// Immutable environment value object.
 ///
 /// Encapsulates everything that varies (or could vary) per flavor, even
-/// though for Grolin all three flavors currently point at the same live
+/// though for Bakaloo all three flavors currently point at the same live
 /// backend. Keeping it on a value object means feature code can depend on
 /// `Env` without caring how the flavor was resolved.
 ///

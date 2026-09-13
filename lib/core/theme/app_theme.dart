@@ -1,10 +1,11 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_colors.dart';
 import 'app_typography.dart';
 
-/// Tied-together [ThemeData] for the Grolin Rider App.
+/// Tied-together [ThemeData] for the Bakaloo Rider App.
 ///
 /// `AppTheme` is the single seam where colors, typography, and component
 /// surfaces meet so screens never reach into raw [Color]/[TextStyle]

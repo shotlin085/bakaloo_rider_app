@@ -1,8 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 /// Sealed result type returned by the delivery action sheets
-/// (`showPickupSheet`, `showDeliveryOtpSheet`, `showProofUploadSheet`,
-/// `showDemoCompleteSheet`).
+/// (`showPickupSheet`, `showProofUploadSheet`, `showDemoCompleteSheet`).
 ///
 /// Pattern matching:
 /// ```

@@ -3,11 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/providers.dart';
-import 'package:grolin_rider_app/features/delivery/data/delivery_api.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_earnings.dart';
-import 'package:grolin_rider_app/features/earnings/application/earnings_controller.dart';
-import 'package:grolin_rider_app/features/earnings/presentation/earnings_screen.dart';
+import 'package:bakaloo_rider_app/core/providers.dart';
+import 'package:bakaloo_rider_app/features/delivery/data/delivery_api.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_earnings.dart';
+import 'package:bakaloo_rider_app/features/earnings/application/earnings_controller.dart';
+import 'package:bakaloo_rider_app/features/earnings/presentation/earnings_screen.dart';
 
 /// Stub controller used by the smoke test so it doesn't reach the
 /// network. Returns a fixed [RiderEarnings] for every period.

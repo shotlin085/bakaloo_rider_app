@@ -1,10 +1,10 @@
-# Grolin Rider App
+# Bakaloo Rider App
 
-Flutter delivery-partner app for the Grolin grocery platform.
+Flutter delivery-partner app for the Bakaloo grocery platform.
 
 ## Backend
 
-The app talks to the live Grolin backend over HTTPS:
+The app talks to the live Bakaloo backend over HTTPS:
 
 - REST: `https://grolin.shotlin.in/api/v1`
 - Socket.IO: `https://grolin.shotlin.in`

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/order_parse_exception.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/order_parse_exception.dart';
 
 void main() {
   group('DeliveryAddress.fromJson', () {

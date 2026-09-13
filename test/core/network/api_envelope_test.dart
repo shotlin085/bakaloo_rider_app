@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/core/network/api_envelope.dart';
+import 'package:bakaloo_rider_app/core/network/api_envelope.dart';
 
 /// Unit tests for [ApiEnvelope.fromJson] and [Pagination.fromJson].
 ///

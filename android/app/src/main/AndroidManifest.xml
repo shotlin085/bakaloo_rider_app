@@ -47,6 +47,14 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Impeller fails to render mobile_scanner's native camera
+             Texture/PlatformView on several real Android devices (solid
+             black preview with the scan overlay animating normally on
+             top) — the QR pickup scanner is unusable without this.
+             Skia handles the camera texture correctly. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <!-- WorkManager background worker — required for periodic location
              heartbeats when the app is backgrounded or killed on Android 8+.
              foregroundServiceType="location" lets it access GPS in the

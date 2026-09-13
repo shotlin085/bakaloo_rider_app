@@ -4,7 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
-import 'package:grolin_rider_app/core/connectivity/connectivity_watcher.dart';
+import 'package:bakaloo_rider_app/core/connectivity/connectivity_watcher.dart';
 
 /// Minimal stand-in for `connectivity_plus`'s [Connectivity] singleton.
 ///

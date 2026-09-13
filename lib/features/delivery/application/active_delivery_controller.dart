@@ -2,24 +2,26 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/maps/geo_point.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/realtime/socket_client.dart';
 import '../../../core/realtime/socket_events.dart';
 import '../../../core/utils/app_logger.dart';
 import '../data/delivery_repository.dart';
 import '../domain/assignment_status.dart';
+import '../domain/collected_payment.dart';
 import '../domain/delivery_order.dart';
 import 'assignment_state_machine.dart';
 
-/// Discriminated outcome of the four delivery-lifecycle actions on
+/// Discriminated outcome of the delivery-lifecycle actions on
 /// [ActiveDeliveryController]: [ActiveDeliveryController.markPickedUp],
-/// [ActiveDeliveryController.deliverWithOtp],
+/// [ActiveDeliveryController.deliverDirect],
 /// [ActiveDeliveryController.deliverWithProof], and
 /// [ActiveDeliveryController.deliverWithDemoMode].
 ///
 /// The presentation layer pattern-matches on the result so each
-/// outcome (success, stale order, invalid OTP, expired OTP, proof
-/// upload failure, generic failure) maps to its own UX path
+/// outcome (success, stale order, proof upload failure, generic
+/// failure) maps to its own UX path
 /// (R13.5, R14.5, R14.6, R15.4, R16.4).
 @immutable
 sealed class DeliveryResult {
@@ -111,16 +113,26 @@ class DeliveryResultFailure extends DeliveryResult {
   final String message;
 }
 
-/// Holds the single active delivery (status `ACCEPTED` or `IN_TRANSIT`)
-/// and owns the four mid-delivery actions (pickup, OTP deliver, proof
-/// deliver, demo deliver).
+/// Holds the rider's active-order **batch** (status `ACCEPTED` or
+/// `IN_TRANSIT`, one or more orders picked up in the same store visit) and
+/// owns the mid-delivery actions (pickup, direct deliver, proof deliver,
+/// demo deliver), each scoped to a specific `orderId`.
+///
+/// One order in the batch is "focused" at a time — [current] — which is
+/// what the existing single-order screens (`active_delivery_map_screen.dart`
+/// and its sheets) render, unchanged. This keeps every pre-existing
+/// per-order-delivery consumer working exactly as before; only the
+/// pickup-phase screens (new in this phase) read [batch] directly.
 ///
 /// Transitions go through [AssignmentStateMachine] to enforce the
-/// monotonicity property (R9.1, R9.2). When the delivery reaches a
-/// terminal status it is **not** auto-cleared from inside the action
-/// methods so the presentation layer can still read the just-completed
-/// order to render the completion summary; the sheet calls
-/// [clearActiveDelivery] when the rider acknowledges the summary.
+/// monotonicity property (R9.1, R9.2). When an order reaches a terminal
+/// status it stays in the batch (not auto-removed) so the presentation
+/// layer can still read it to render the completion summary; the summary
+/// sheet calls [clearActiveDelivery] when the rider acknowledges it, which
+/// removes just that order and auto-advances focus to the next
+/// not-yet-delivered order in the batch, if any (R9, item 9's "guide the
+/// rider to the next stop" — Phase C picks the next batch entry
+/// arbitrarily; Phase D's route sequencing decides the real order).
 ///
 /// The same auto-clear behaviour is preserved for externally-driven
 /// state changes through [applyExternalStatus] (e.g. socket
@@ -137,72 +149,241 @@ class ActiveDeliveryController extends ChangeNotifier {
   ///
   /// Both are nullable for test ergonomics — tests that only drive
   /// [setActiveDelivery] / [applyExternalStatus] can pass `null` for
-  /// either. Network methods ([markPickedUp], [deliverWithOtp],
+  /// either. Network methods ([markPickedUp], [deliverDirect],
   /// [deliverWithProof], [deliverWithDemoMode]) require a non-null
   /// repository; calling them without one returns a
   /// [DeliveryResultFailure].
   ActiveDeliveryController({
     DeliveryRepository? repository,
     SocketClient? socket,
+    ValueListenable<GeoPoint?>? riderLocation,
   })  : _repository = repository,
-        _socket = socket;
+        _socket = socket,
+        _riderLocation = riderLocation;
 
   final DeliveryRepository? _repository;
   final SocketClient? _socket;
 
-  DeliveryOrder? _current;
-  bool _busy = false;
+  /// Live rider GPS fix, read (not listened to) at auto-advance time so
+  /// [_focusNextIfNeeded] can rank the remaining batch by real distance
+  /// (item 8/9: "deliver whichever stop is closest next"). Optional —
+  /// falls back to time-based ordering when unset (e.g. in tests, or
+  /// before the first GPS fix arrives).
+  final ValueListenable<GeoPoint?>? _riderLocation;
 
-  /// The currently active delivery, or `null` when none is active.
-  DeliveryOrder? get current => _current;
+  final Map<String, DeliveryOrder> _orders = <String, DeliveryOrder>{};
+  final Set<String> _busyIds = <String>{};
+  String? _focusedOrderId;
 
-  /// Whether a network action ([markPickedUp] / [deliverWith…]) is in
-  /// flight. Sheets read this flag to disable their primary buttons.
-  bool get isBusy => _busy;
+  /// Orders the rider explicitly skipped — deprioritized for auto-advance
+  /// (see [_focusNextIfNeeded]) but still in the batch, so they're
+  /// revisited once every other ready order has been handled.
+  final Set<String> _skippedOrderIds = <String>{};
 
-  /// Sets [order] as the active delivery and notifies listeners.
+  /// COD cash/UPI split the rider recorded via the "Collect payment" step,
+  /// keyed by orderId. Populated by [recordCollectedPayment]; the "Deliver"
+  /// action reads from here rather than taking the split as a parameter, so
+  /// it survives the (stateless) delivery sheet being rebuilt between the
+  /// rider tapping "Collect payment" and later tapping "Deliver".
+  final Map<String, CollectedPayment> _collectedPayments =
+      <String, CollectedPayment>{};
+
+  /// The payment split recorded for [orderId], or `null` if the rider
+  /// hasn't gone through the collection step yet (or the order isn't COD).
+  CollectedPayment? collectedPaymentFor(String orderId) =>
+      _collectedPayments[orderId];
+
+  /// Records [payment] as the confirmed cash/UPI split for [orderId] and
+  /// notifies listeners so the "Deliver" button un-disables.
+  void recordCollectedPayment(String orderId, CollectedPayment payment) {
+    _collectedPayments[orderId] = payment;
+    notifyListeners();
+  }
+
+  /// Every order currently in the rider's active batch (pickup-confirmed,
+  /// out for delivery), in no particular order — pickup-batch/route
+  /// screens read this directly.
+  List<DeliveryOrder> get batch =>
+      List<DeliveryOrder>.unmodifiable(_orders.values);
+
+  /// Looks up one batch order by id, or `null` if it isn't in the batch.
+  DeliveryOrder? byId(String orderId) => _orders[orderId];
+
+  /// The order the existing single-order delivery screens
+  /// (`active_delivery_map_screen.dart` and its sheets) render — the
+  /// "focused" batch entry. `null` when nothing is currently focused
+  /// (batch empty, or all remaining orders still need pickup).
+  ///
+  /// Kept as the same getter name/shape the pre-batch codebase used so
+  /// every existing single-order consumer keeps working unchanged.
+  DeliveryOrder? get current =>
+      _focusedOrderId == null ? null : _orders[_focusedOrderId];
+
+  /// Whether a network action is in flight **for the currently focused
+  /// order**. Sheets read this flag to disable their primary buttons —
+  /// same call shape as before, but now backed by a per-order busy set so
+  /// an action on one batch order never blocks another.
+  bool get isBusy =>
+      _focusedOrderId != null && _busyIds.contains(_focusedOrderId);
+
+  /// Whether a network action is in flight for [orderId] specifically.
+  /// Used by batch-aware screens that can have more than one order
+  /// visible at once.
+  bool isBusyFor(String orderId) => _busyIds.contains(orderId);
+
+  /// Adds or updates [order] in the batch. If nothing is currently
+  /// focused, this order becomes the focused one — preserves the
+  /// pre-batch behaviour of "the order I was just told about is the one
+  /// the single-order screens should show" for the common single-order
+  /// case, while additional orders simply join the batch without
+  /// stealing focus from whichever delivery is already in progress.
   void setActiveDelivery(DeliveryOrder order) {
-    _current = order;
+    _orders[order.orderId] = order;
+    _focusedOrderId ??= order.orderId;
     notifyListeners();
   }
 
-  /// Clears the active delivery and notifies listeners.
+  /// Alias for [setActiveDelivery] with a batch-first name — same
+  /// behaviour, used by new pickup-phase code so call sites read clearly
+  /// as "this order just joined the batch" rather than the legacy
+  /// single-order phrasing.
+  void addOrUpdate(DeliveryOrder order) => setActiveDelivery(order);
+
+  /// Removes [orderId] from the batch entirely (used when an order is
+  /// cancelled/removed rather than delivered). Un-focuses and
+  /// auto-advances if it was the focused order.
+  void remove(String orderId) {
+    _orders.remove(orderId);
+    _busyIds.remove(orderId);
+    _collectedPayments.remove(orderId);
+    _skippedOrderIds.remove(orderId);
+    if (_focusedOrderId == orderId) {
+      _focusedOrderId = null;
+      _focusNextIfNeeded();
+    }
+    notifyListeners();
+  }
+
+  /// Clears the focused delivery: removes it from the batch and
+  /// auto-advances focus to the next remaining batch order, if any.
+  ///
+  /// Kept as the same method name the completion-summary sheet already
+  /// calls — its meaning changes from "there is no more active delivery"
+  /// (single-order world) to "this one delivery is done, move to the
+  /// next one in the batch" (batch world), which is exactly item 9's
+  /// "mark only that order as delivered, keep the other batch orders
+  /// active, automatically guide the rider to the next stop."
   void clearActiveDelivery() {
-    _current = null;
+    final String? id = _focusedOrderId;
+    if (id != null) {
+      _orders.remove(id);
+      _busyIds.remove(id);
+      _collectedPayments.remove(id);
+      _skippedOrderIds.remove(id);
+    }
+    _focusedOrderId = null;
+    _focusNextIfNeeded();
     notifyListeners();
   }
 
-  /// Applies an externally received [next] status to the active delivery
+  /// Explicitly focuses [orderId] (used by the pickup-batch screen's
+  /// "Start Deliveries" action, and by a batch overview letting the
+  /// rider pick which stop to view). No-ops if [orderId] isn't in the
+  /// batch. Un-skips it — the rider picking it directly overrides
+  /// whatever auto-advance would otherwise have preferred.
+  void focusOrder(String orderId) {
+    if (!_orders.containsKey(orderId)) return;
+    _focusedOrderId = orderId;
+    _skippedOrderIds.remove(orderId);
+    notifyListeners();
+  }
+
+  /// Skips [orderId]: moves focus to the next ready order in the batch
+  /// without changing [orderId]'s status — it stays in the batch and is
+  /// revisited automatically once every other ready order has been
+  /// delivered/skipped-through. No-ops if [orderId] isn't the focused
+  /// order or isn't in the batch (nothing to skip to otherwise).
+  void skip(String orderId) {
+    if (_focusedOrderId != orderId || !_orders.containsKey(orderId)) return;
+    _skippedOrderIds.add(orderId);
+    _focusedOrderId = null;
+    _focusNextIfNeeded();
+    notifyListeners();
+  }
+
+  /// Auto-advance target when nothing is currently focused (item 9: "guide
+  /// the rider to the next stop"). Prefers the first stop of the real
+  /// nearest-neighbor route among orders that are actually ready to
+  /// deliver (picked up, [AssignmentStatus.inTransit]) — Express first,
+  /// then whichever is physically closest to the rider's live GPS
+  /// position (see [DeliveryOrder.sequenceRoute], item 8/9: "closest
+  /// distance first, then next from there"). Falls back to any
+  /// remaining batch order if none are in-transit yet, so this never
+  /// leaves the controller in a "batch non-empty but nothing focused"
+  /// state.
+  void _focusNextIfNeeded() {
+    if (_focusedOrderId != null || _orders.isEmpty) return;
+    final List<DeliveryOrder> readyToDeliver = _orders.values
+        .where((DeliveryOrder o) => o.assignmentStatus == AssignmentStatus.inTransit)
+        .toList();
+    // Prefer orders the rider hasn't skipped yet; only fall back to a
+    // skipped one once it's the only ready order left, so a skip reliably
+    // moves on to something else instead of re-focusing immediately.
+    final List<DeliveryOrder> notSkipped = readyToDeliver
+        .where((DeliveryOrder o) => !_skippedOrderIds.contains(o.orderId))
+        .toList();
+    final List<DeliveryOrder> pool =
+        notSkipped.isNotEmpty ? notSkipped : readyToDeliver;
+    final List<DeliveryOrder> sequenced =
+        DeliveryOrder.sequenceRoute(pool, _riderLocation?.value);
+    _focusedOrderId =
+        sequenced.isNotEmpty ? sequenced.first.orderId : _orders.keys.first;
+    if (_focusedOrderId != null) {
+      _skippedOrderIds.remove(_focusedOrderId);
+    }
+  }
+
+  /// Applies an externally received [next] status to the batch order
   /// identified by [orderId].
   ///
-  /// If the current delivery's `orderId` does not match [orderId] the call
-  /// is a no-op (the event is for a different order).
+  /// If [orderId] isn't in the batch the call is a no-op (the event is
+  /// for an order this controller isn't tracking).
   ///
-  /// The transition is validated by [AssignmentStateMachine.apply]; illegal
-  /// transitions are rejected and logged without mutating state. When the
-  /// resulting status is terminal, [_onTerminalExternal] is called to clear the
-  /// active delivery.
+  /// Non-terminal transitions are validated by [AssignmentStateMachine.apply];
+  /// illegal ones are rejected and logged without mutating state — that
+  /// guard exists for the rider's own step-by-step actions (R9). A
+  /// *terminal* [next] (DELIVERED/CANCELLED) is always applied instead,
+  /// bypassing the walk check: an admin can mark an order delivered or
+  /// cancel it from the dashboard without the rider's local state ever
+  /// having stepped through the intermediate stages (e.g. cancelling an
+  /// order the rider hasn't picked up yet), and the server's word on a
+  /// terminal outcome is authoritative regardless of what this device
+  /// thinks the order's current stage is. When the resulting status is
+  /// terminal, [_onTerminalExternal] is called to remove just that order
+  /// from the batch.
   void applyExternalStatus(String orderId, AssignmentStatus next) {
-    final DeliveryOrder? current = _current;
-    if (current == null || current.orderId != orderId) return;
+    final DeliveryOrder? order = _orders[orderId];
+    if (order == null) return;
 
-    final AssignmentStatus resolved = AssignmentStateMachine.apply(
-      current.assignmentStatus,
-      next,
-      orderId: orderId,
-    );
+    final AssignmentStatus resolved = AssignmentStateMachine.isTerminal(next)
+        ? next
+        : AssignmentStateMachine.apply(
+            order.assignmentStatus,
+            next,
+            orderId: orderId,
+          );
 
-    if (resolved == current.assignmentStatus) {
+    if (resolved == order.assignmentStatus) {
       // Either idempotent (same status) or illegal (rejected). Either way
       // the state did not change, so no notification is needed.
       return;
     }
 
-    _current = current.copyWith(assignmentStatus: resolved);
+    _orders[orderId] = order.copyWith(assignmentStatus: resolved);
     notifyListeners();
 
     if (AssignmentStateMachine.isTerminal(resolved)) {
-      _onTerminalExternal();
+      _onTerminalExternal(orderId);
     }
   }
 
@@ -226,51 +407,18 @@ class ActiveDeliveryController extends ChangeNotifier {
       final DeliveryRepository repository = _requireRepository();
       await repository.markPickedUp(orderId);
       _applyLocalTransition(orderId, AssignmentStatus.inTransit);
-      final DeliveryOrder? c = _current;
-      if (c == null || c.orderId != orderId) {
+      final DeliveryOrder? o = _orders[orderId];
+      if (o == null) {
         return _genericSuccess(orderId);
       }
       return DeliveryResultSuccess(
-        orderEarning: c.riderEarning,
-        customerName: c.customerAddress.name.isNotEmpty
-            ? c.customerAddress.name
-            : c.customerAddress.address,
-        orderNumber: c.orderNumber,
+        orderEarning: o.riderEarning,
+        customerName: o.customerAddress.name.isNotEmpty
+            ? o.customerAddress.name
+            : o.customerAddress.address,
+        orderNumber: o.orderNumber,
       );
     });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Resend OTP
-  // ---------------------------------------------------------------------------
-
-  /// Regenerates the delivery OTP and re-notifies the customer with the
-  /// new code via push notification.
-  ///
-  /// Returns `true` on success. The rider never needs to see the new
-  /// code themselves — the customer reads it out on arrival — so this
-  /// only surfaces a boolean for a confirmation snackbar rather than
-  /// the full [DeliveryResult] hierarchy.
-  Future<bool> resendOtp(String orderId) async {
-    final DeliveryRepository? repository = _repository;
-    if (repository == null || _busy) return false;
-    _busy = true;
-    notifyListeners();
-    try {
-      await repository.resendOtp(orderId);
-      return true;
-    } catch (e, stack) {
-      AppLogger.warn(
-        LogTopic.state,
-        'resendOtp($orderId) failed',
-        error: e,
-        stackTrace: stack,
-      );
-      return false;
-    } finally {
-      _busy = false;
-      notifyListeners();
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -281,20 +429,21 @@ class ActiveDeliveryController extends ChangeNotifier {
   /// door or can't be reached at the drop location.
   ///
   /// Applies the terminal transition `ACCEPTED/IN_TRANSIT ->
-  /// CANCELLED`, emits `order:untrack`, and clears the active delivery
-  /// so the rider can immediately go back online for a new offer.
+  /// CANCELLED`, emits `order:untrack`, and removes it from the batch
+  /// (auto-advancing focus if it was the focused order) so the rider can
+  /// immediately continue with the rest of the batch or go back online.
   /// Returns `true` on success.
   Future<bool> cancelDelivery(String orderId, String reason) async {
     final DeliveryRepository? repository = _repository;
-    if (repository == null || _busy) return false;
-    _busy = true;
+    if (repository == null || _busyIds.contains(orderId)) return false;
+    _busyIds.add(orderId);
     notifyListeners();
     try {
       await repository.cancelDelivery(orderId, reason);
       _socket?.emit(SocketEvents.orderUntrack, <String, dynamic>{
         'orderId': orderId,
       });
-      _onTerminalExternal();
+      _onTerminalExternal(orderId);
       return true;
     } catch (e, stack) {
       AppLogger.warn(
@@ -305,35 +454,35 @@ class ActiveDeliveryController extends ChangeNotifier {
       );
       return false;
     } finally {
-      _busy = false;
+      _busyIds.remove(orderId);
       notifyListeners();
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Deliver via OTP (R14)
+  // Deliver directly (no OTP / proof step)
   // ---------------------------------------------------------------------------
 
-  /// Marks [orderId] as delivered using the customer's [otp].
-  ///
-  /// Translates backend codes:
-  /// - `INVALID_OTP` -> [DeliveryResultInvalidOtp] (R14.5).
-  /// - `OTP_EXPIRED` -> [DeliveryResultOtpExpired] (R14.6).
-  /// - `ORDER_NOT_AVAILABLE` -> [DeliveryResultStale].
-  ///
-  /// On success: applies the terminal transition
-  /// `IN_TRANSIT -> DELIVERED`, emits `order:untrack` (R14.4), and
-  /// returns [DeliveryResultSuccess].
-  Future<DeliveryResult> deliverWithOtp(String orderId, String otp) async {
+  /// Marks [orderId] as delivered immediately — no OTP or proof-photo
+  /// verification. COD collection (if any) has already happened via
+  /// [recordCollectedPayment] before this is called.
+  Future<DeliveryResult> deliverDirect(
+    String orderId, {
+    double? cashCollected,
+    double? upiCollected,
+  }) async {
     return _runAction(
-      'deliverWithOtp',
+      'deliverDirect',
       orderId,
       () async {
         final DeliveryRepository repository = _requireRepository();
-        await repository.markDelivered(orderId, otp: otp);
+        await repository.markDelivered(
+          orderId,
+          cashCollected: cashCollected,
+          upiCollected: upiCollected,
+        );
         return _completeDelivery(orderId);
       },
-      mapBackendCode: _mapDeliverError,
     );
   }
 
@@ -351,15 +500,20 @@ class ActiveDeliveryController extends ChangeNotifier {
   /// proof sheet can keep the preview and offer a retry (R15.4).
   /// Step-2 errors are surfaced via the standard mapping (stale /
   /// generic).
-  Future<DeliveryResult> deliverWithProof(String orderId, File file) async {
+  Future<DeliveryResult> deliverWithProof(
+    String orderId,
+    File file, {
+    double? cashCollected,
+    double? upiCollected,
+  }) async {
     final DeliveryRepository? repository = _repository;
     if (repository == null) {
       return const DeliveryResultFailure('Network unavailable');
     }
-    if (_busy) {
+    if (_busyIds.contains(orderId)) {
       return const DeliveryResultFailure('Action already in progress');
     }
-    _busy = true;
+    _busyIds.add(orderId);
     notifyListeners();
 
     try {
@@ -381,7 +535,12 @@ class ActiveDeliveryController extends ChangeNotifier {
       }
 
       try {
-        await repository.markDelivered(orderId, proofPhotoUrl: url);
+        await repository.markDelivered(
+          orderId,
+          proofPhotoUrl: url,
+          cashCollected: cashCollected,
+          upiCollected: upiCollected,
+        );
         return _completeDelivery(orderId);
       } on OrderNotAvailableException catch (e) {
         AppLogger.info(
@@ -401,7 +560,7 @@ class ActiveDeliveryController extends ChangeNotifier {
       );
       return DeliveryResultFailure(_describeError(e));
     } finally {
-      _busy = false;
+      _busyIds.remove(orderId);
       notifyListeners();
     }
   }
@@ -433,7 +592,7 @@ class ActiveDeliveryController extends ChangeNotifier {
   // Internals
   // ---------------------------------------------------------------------------
 
-  /// Runs [action] guarded by the [_busy] flag, with consistent
+  /// Runs [action] guarded by a per-[orderId] busy flag, with consistent
   /// listener notification and stale-order / generic error mapping.
   ///
   /// [mapBackendCode] is consulted before the generic
@@ -449,10 +608,10 @@ class ActiveDeliveryController extends ChangeNotifier {
     if (_repository == null) {
       return const DeliveryResultFailure('Network unavailable');
     }
-    if (_busy) {
+    if (_busyIds.contains(orderId)) {
       return const DeliveryResultFailure('Action already in progress');
     }
-    _busy = true;
+    _busyIds.add(orderId);
     notifyListeners();
 
     try {
@@ -482,7 +641,7 @@ class ActiveDeliveryController extends ChangeNotifier {
       );
       return DeliveryResultFailure(_describeError(e));
     } finally {
-      _busy = false;
+      _busyIds.remove(orderId);
       notifyListeners();
     }
   }
@@ -501,17 +660,17 @@ class ActiveDeliveryController extends ChangeNotifier {
     return null;
   }
 
-  /// Applies `IN_TRANSIT -> DELIVERED` to the active delivery, emits
+  /// Applies `IN_TRANSIT -> DELIVERED` to [orderId], emits
   /// `order:untrack`, and returns a [DeliveryResultSuccess] populated
-  /// from the just-completed order. Does NOT clear the active
-  /// delivery — the completion sheet reads it before clearing.
+  /// from the just-completed order. Does NOT remove it from the batch —
+  /// the completion sheet reads it before calling [clearActiveDelivery].
   DeliveryResultSuccess _completeDelivery(String orderId) {
-    final DeliveryOrder? before = _current;
+    final DeliveryOrder? before = _orders[orderId];
     _applyLocalTransition(orderId, AssignmentStatus.delivered);
     _socket?.emit(SocketEvents.orderUntrack, <String, dynamic>{
       'orderId': orderId,
     });
-    final DeliveryOrder? after = _current ?? before;
+    final DeliveryOrder? after = _orders[orderId] ?? before;
     if (after == null) {
       return _genericSuccess(orderId);
     }
@@ -524,21 +683,21 @@ class ActiveDeliveryController extends ChangeNotifier {
     );
   }
 
-  /// Locally drives the active delivery through [next] using the state
-  /// machine. Same monotonic-walk guard as [applyExternalStatus] but
-  /// without triggering the auto-clear on terminal — the action paths
-  /// keep the order around for the completion summary.
+  /// Locally drives [orderId] through [next] using the state machine.
+  /// Same monotonic-walk guard as [applyExternalStatus] but without
+  /// triggering the auto-remove on terminal — the action paths keep the
+  /// order around for the completion summary.
   void _applyLocalTransition(String orderId, AssignmentStatus next) {
-    final DeliveryOrder? current = _current;
-    if (current == null || current.orderId != orderId) return;
+    final DeliveryOrder? order = _orders[orderId];
+    if (order == null) return;
 
     final AssignmentStatus resolved = AssignmentStateMachine.apply(
-      current.assignmentStatus,
+      order.assignmentStatus,
       next,
       orderId: orderId,
     );
-    if (resolved == current.assignmentStatus) return;
-    _current = current.copyWith(assignmentStatus: resolved);
+    if (resolved == order.assignmentStatus) return;
+    _orders[orderId] = order.copyWith(assignmentStatus: resolved);
     notifyListeners();
   }
 
@@ -553,8 +712,8 @@ class ActiveDeliveryController extends ChangeNotifier {
     return repo;
   }
 
-  /// Builds a fallback [DeliveryResultSuccess] when the active delivery
-  /// has been cleared between the API call and this method (e.g. a
+  /// Builds a fallback [DeliveryResultSuccess] when the order has been
+  /// removed from the batch between the API call and this method (e.g. a
   /// concurrent cancellation). The home dashboard refresh will fill in
   /// real values on the next refresh.
   DeliveryResultSuccess _genericSuccess(String orderId) {
@@ -565,11 +724,18 @@ class ActiveDeliveryController extends ChangeNotifier {
     );
   }
 
-  /// Called when the active delivery reaches a terminal status via an
-  /// external (socket) event. Clears `_current` and notifies listeners
-  /// so the UI can react.
-  void _onTerminalExternal() {
-    _current = null;
+  /// Called when [orderId] reaches a terminal status via an external
+  /// (socket) event or an in-controller cancel. Removes it from the
+  /// batch and auto-advances focus to the next remaining order, if any.
+  void _onTerminalExternal(String orderId) {
+    _orders.remove(orderId);
+    _busyIds.remove(orderId);
+    _collectedPayments.remove(orderId);
+    _skippedOrderIds.remove(orderId);
+    if (_focusedOrderId == orderId) {
+      _focusedOrderId = null;
+      _focusNextIfNeeded();
+    }
     notifyListeners();
   }
 

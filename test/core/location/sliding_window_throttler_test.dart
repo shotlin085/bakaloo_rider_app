@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/location/sliding_window_throttler.dart';
+import 'package:bakaloo_rider_app/core/location/sliding_window_throttler.dart';
 
 /// Standard unit tests for [SlidingWindowThrottler]. The Property 3
 /// guarantees over arbitrary event traces are covered separately by

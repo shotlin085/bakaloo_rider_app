@@ -1,16 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
-import 'package:grolin_rider_app/features/delivery/data/delivery_api.dart';
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_item.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_order.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_earnings.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_profile.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_stats.dart';
-import 'package:grolin_rider_app/features/delivery/domain/store_info.dart';
-import 'package:grolin_rider_app/features/home/application/home_dashboard_controller.dart';
+import 'package:bakaloo_rider_app/features/delivery/data/delivery_api.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_item.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_order.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_earnings.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_profile.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_stats.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/store_info.dart';
+import 'package:bakaloo_rider_app/features/home/application/home_dashboard_controller.dart';
 
 class _MockDeliveryApi extends Mock implements DeliveryApi {}
 

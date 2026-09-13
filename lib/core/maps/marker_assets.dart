@@ -79,6 +79,15 @@ class MarkerAssets {
         iconColor: AppColors.white,
         icon: Icons.home,
       );
+
+  /// Numbered marker for a batch stop that isn't the currently-focused
+  /// destination — lets the rider see every remaining delivery on the
+  /// map at once, ranked by live distance, instead of only the one
+  /// they're actively navigating to.
+  Widget stopMarker(int number) => _NumberedCircleMarker(
+        size: otherSizeDp,
+        number: number,
+      );
 }
 
 class _CircleMarker extends StatelessWidget {
@@ -119,6 +128,47 @@ class _CircleMarker extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: Icon(icon, color: iconColor, size: size * 0.55),
+    );
+  }
+}
+
+/// White pin with a bold stop number instead of a glyph — visually
+/// distinct from the black rider/customer markers so it reads as "an
+/// upcoming stop," not "where I'm headed right now."
+class _NumberedCircleMarker extends StatelessWidget {
+  const _NumberedCircleMarker({required this.size, required this.number});
+
+  final double size;
+  final int number;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(
+        color: AppColors.white,
+        shape: BoxShape.circle,
+        border: Border.fromBorderSide(
+          BorderSide(color: AppColors.black, width: 1.5),
+        ),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$number',
+        style: TextStyle(
+          color: AppColors.charcoal,
+          fontWeight: FontWeight.w800,
+          fontSize: size * 0.42,
+        ),
+      ),
     );
   }
 }

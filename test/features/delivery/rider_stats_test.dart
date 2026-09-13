@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_stats.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_stats.dart';
 
 /// The exact live stats JSON shape from the backend contract.
 const Map<String, dynamic> _liveStatsJson = <String, dynamic>{

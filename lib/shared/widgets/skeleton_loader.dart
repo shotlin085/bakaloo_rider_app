@@ -3,7 +3,7 @@ import 'package:shimmer/shimmer.dart';
 
 import '../../core/theme/app_colors.dart';
 
-/// Skeleton placeholder builders for the Grolin Rider App.
+/// Skeleton placeholder builders for the Bakaloo Rider App.
 ///
 /// `Skeleton` is a small namespace of factory constructors that render
 /// shimmering [AppColors.offWhite] surfaces while async data is loading.

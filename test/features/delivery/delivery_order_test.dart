@@ -1,9 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_item.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_order.dart';
-import 'package:grolin_rider_app/features/delivery/domain/order_parse_exception.dart';
+import 'package:bakaloo_rider_app/core/maps/geo_point.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_item.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_order.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/order_parse_exception.dart';
 
 /// Minimal valid order JSON for use in tests.
 Map<String, dynamic> _validOrderJson({
@@ -380,4 +381,259 @@ void main() {
       expect(updated.totalAmount, original.totalAmount);
     });
   });
+
+  group('DeliveryOrder.compareDeliveryPriority (item 8/9: multi-stop sequencing)', () {
+    final DeliveryOrder base = DeliveryOrder.fromJson(_validOrderJson());
+
+    DeliveryOrder order({
+      bool quickDelivery = false,
+      DateTime? scheduledSlotStart,
+      DateTime? createdAt,
+    }) {
+      return base.copyWith(
+        quickDeliverySelected: quickDelivery,
+        scheduledSlotStart: scheduledSlotStart,
+        createdAt: createdAt,
+      );
+    }
+
+    test('an Express (quick delivery) order always sorts before a non-Express order', () {
+      final DeliveryOrder express = order(
+        quickDelivery: true,
+        createdAt: DateTime(2026, 8, 15, 12), // placed later
+      );
+      final DeliveryOrder standard = order(
+        createdAt: DateTime(2026, 8, 15, 9), // placed earlier — would win on time alone
+      );
+
+      final List<DeliveryOrder> sorted = <DeliveryOrder>[standard, express]
+        ..sort(DeliveryOrder.compareDeliveryPriority);
+
+      expect(sorted.first, express);
+    });
+
+    test('within the same tier, the earlier placed (createdAt) ASAP order goes first', () {
+      final DeliveryOrder later = order(createdAt: DateTime(2026, 8, 15, 12));
+      final DeliveryOrder earlier = order(createdAt: DateTime(2026, 8, 15, 9));
+
+      final List<DeliveryOrder> sorted = <DeliveryOrder>[later, earlier]
+        ..sort(DeliveryOrder.compareDeliveryPriority);
+
+      expect(sorted.first, earlier);
+    });
+
+    test('a scheduled order sequences by its promised slot start, not createdAt', () {
+      final DeliveryOrder placedFirstSlotLater = order(
+        createdAt: DateTime(2026, 8, 15, 8),
+        scheduledSlotStart: DateTime(2026, 8, 15, 18), // 6 PM window
+      );
+      final DeliveryOrder placedLaterSlotSooner = order(
+        createdAt: DateTime(2026, 8, 15, 10),
+        scheduledSlotStart: DateTime(2026, 8, 15, 14), // 2 PM window
+      );
+
+      final List<DeliveryOrder> sorted = <DeliveryOrder>[
+        placedFirstSlotLater,
+        placedLaterSlotSooner,
+      ]..sort(DeliveryOrder.compareDeliveryPriority);
+
+      // The 2 PM window comes before the 6 PM window regardless of which
+      // order was placed (created) first.
+      expect(sorted.first, placedLaterSlotSooner);
+    });
+
+    test('multiple Express orders are still ranked among themselves by time', () {
+      final DeliveryOrder expressLater = order(
+        quickDelivery: true,
+        createdAt: DateTime(2026, 8, 15, 12),
+      );
+      final DeliveryOrder expressEarlier = order(
+        quickDelivery: true,
+        createdAt: DateTime(2026, 8, 15, 9),
+      );
+      final DeliveryOrder standard = order(createdAt: DateTime(2026, 8, 15, 1));
+
+      final List<DeliveryOrder> sorted = <DeliveryOrder>[
+        standard,
+        expressLater,
+        expressEarlier,
+      ]..sort(DeliveryOrder.compareDeliveryPriority);
+
+      expect(sorted, <DeliveryOrder>[expressEarlier, expressLater, standard]);
+    });
+
+    test('orders with no timestamp at all sort after ones that have one, within the same tier', () {
+      final DeliveryOrder noTimestamp = order();
+      final DeliveryOrder withTimestamp = order(createdAt: DateTime(2026, 8, 15, 9));
+
+      final List<DeliveryOrder> sorted = <DeliveryOrder>[noTimestamp, withTimestamp]
+        ..sort(DeliveryOrder.compareDeliveryPriority);
+
+      expect(sorted.first, withTimestamp);
+    });
+  });
+
+  group('DeliveryOrder.distanceFromMeters', () {
+    final DeliveryOrder base = DeliveryOrder.fromJson(_validOrderJson());
+
+    test('computes a positive haversine distance to the customer address', () {
+      final DeliveryOrder farAway = base.copyWith(
+        customerAddress: DeliveryAddress(
+          name: 'Customer',
+          address: 'Far away',
+          lat: 23.5726, // ~1 degree of latitude away
+          lng: 88.3639,
+        ),
+      );
+
+      final double? distance =
+          farAway.distanceFromMeters(const GeoPoint(22.5726, 88.3639));
+
+      expect(distance, isNotNull);
+      expect(distance, greaterThan(100000)); // roughly 111 km per degree
+    });
+
+    test('returns null when the customer address has no coordinates', () {
+      final DeliveryOrder noCoords = base.copyWith(
+        customerAddress: DeliveryAddress(name: 'Customer', address: 'Somewhere'),
+      );
+
+      expect(noCoords.distanceFromMeters(const GeoPoint(22.5726, 88.3639)), isNull);
+    });
+  });
+
+  group(
+    'DeliveryOrder.sequenceRoute (item 8/9: real multi-stop route sequencing)',
+    () {
+      final DeliveryOrder base = DeliveryOrder.fromJson(_validOrderJson());
+      const GeoPoint rider = GeoPoint(22.50, 88.30);
+
+      DeliveryOrder orderAt({
+        bool quickDelivery = false,
+        double? lat,
+        double? lng,
+        DateTime? createdAt,
+      }) {
+        return base.copyWith(
+          quickDeliverySelected: quickDelivery,
+          createdAt: createdAt,
+          customerAddress: DeliveryAddress(
+            name: 'Customer',
+            address: 'Drop',
+            lat: lat,
+            lng: lng,
+          ),
+        );
+      }
+
+      test('the physically closer order comes first, even if placed later', () {
+        final DeliveryOrder near = orderAt(
+          lat: 22.51,
+          lng: 88.31,
+          createdAt: DateTime(2026, 8, 15, 12), // placed later
+        );
+        final DeliveryOrder far = orderAt(
+          lat: 23.50,
+          lng: 89.30,
+          createdAt: DateTime(2026, 8, 15, 9), // placed earlier — would win on time alone
+        );
+
+        final List<DeliveryOrder> sequenced =
+            DeliveryOrder.sequenceRoute(<DeliveryOrder>[far, near], rider);
+
+        expect(sequenced.first, near);
+      });
+
+      test('Express still beats a physically closer standard order', () {
+        final DeliveryOrder closeStandard = orderAt(lat: 22.51, lng: 88.31);
+        final DeliveryOrder farExpress =
+            orderAt(quickDelivery: true, lat: 23.50, lng: 89.30);
+
+        final List<DeliveryOrder> sequenced = DeliveryOrder.sequenceRoute(
+          <DeliveryOrder>[closeStandard, farExpress],
+          rider,
+        );
+
+        expect(sequenced.first, farExpress);
+      });
+
+      test('falls back to time-based ordering when riderPosition is null', () {
+        final DeliveryOrder later = orderAt(
+          lat: 23.50,
+          lng: 89.30,
+          createdAt: DateTime(2026, 8, 15, 12),
+        );
+        final DeliveryOrder earlier = orderAt(
+          lat: 22.51,
+          lng: 88.31,
+          createdAt: DateTime(2026, 8, 15, 9),
+        );
+
+        final List<DeliveryOrder> sequenced =
+            DeliveryOrder.sequenceRoute(<DeliveryOrder>[later, earlier], null);
+
+        expect(sequenced.first, earlier);
+      });
+
+      test('an order with unknown customer coordinates ranks after a known one', () {
+        final DeliveryOrder known = orderAt(lat: 23.50, lng: 89.30);
+        final DeliveryOrder unknown = orderAt();
+
+        final List<DeliveryOrder> sequenced =
+            DeliveryOrder.sequenceRoute(<DeliveryOrder>[unknown, known], rider);
+
+        expect(sequenced.first, known);
+      });
+
+      test(
+        'the second stop is nearest to the FIRST stop, not just nearest to the '
+        'rider — real cascading route sequencing, not a flat single-point sort',
+        () {
+          // Hand-verified geometry (see delivery_order_test.dart history for the
+          // derivation): flat distance-from-rider would rank these B before C,
+          // but once actually standing at A, C is the closer next hop.
+          final DeliveryOrder a = orderAt(lat: 1.01, lng: 1.00); // ~1.11 km from rider
+          final DeliveryOrder b = orderAt(lat: 1.01, lng: 1.05); // ~5.68 km from rider
+          final DeliveryOrder c = orderAt(lat: 1.052, lng: 1.00); // ~5.79 km from rider
+
+          final List<DeliveryOrder> sequenced = DeliveryOrder.sequenceRoute(
+            <DeliveryOrder>[b, c, a],
+            const GeoPoint(1.00, 1.00),
+          );
+
+          expect(
+            sequenced,
+            <DeliveryOrder>[a, c, b],
+            reason:
+                'A is closest to the rider (unambiguous first stop). From A, C '
+                '(~4.68 km away) is closer than B (~5.57 km away), even though B '
+                'is closer to the *rider* than C is — the route must chain '
+                'through each stop, not just rank everything from one point.',
+          );
+        },
+      );
+
+      test('sequences within the express tier first, then chains into standard', () {
+        // Express tier: express-near then express-far (nearest-neighbor from rider).
+        final DeliveryOrder expressNear =
+            orderAt(quickDelivery: true, lat: 22.501, lng: 88.301);
+        final DeliveryOrder expressFar =
+            orderAt(quickDelivery: true, lat: 22.60, lng: 88.40);
+        // Standard tier: physically right next to the rider, but must still
+        // come after both express stops.
+        final DeliveryOrder standardVeryNear =
+            orderAt(lat: 22.5001, lng: 88.3001);
+
+        final List<DeliveryOrder> sequenced = DeliveryOrder.sequenceRoute(
+          <DeliveryOrder>[standardVeryNear, expressFar, expressNear],
+          rider,
+        );
+
+        expect(
+          sequenced,
+          <DeliveryOrder>[expressNear, expressFar, standardVeryNear],
+        );
+      });
+    },
+  );
 }

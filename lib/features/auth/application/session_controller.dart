@@ -96,15 +96,42 @@ class SessionController extends ChangeNotifier {
         user: user,
       ));
     } on ApiAuthException catch (error, stack) {
+      // A 401 here can mean two different things: the refresh token is
+      // genuinely dead, or the silent refresh attempt behind this
+      // request merely failed transiently (network blip / timeout /
+      // 5xx) and this 401 is just the original expired access token
+      // falling through. AuthRepository.refreshTokens() only clears the
+      // token store on a *confirmed* rejection from the backend, so if
+      // a refresh token is still there, this was the transient case —
+      // wiping a perfectly valid 365-day session over a momentary
+      // network hiccup is exactly the false-logout bug this guards
+      // against.
+      final String? remainingRefreshToken =
+          await _tokenStore.readRefreshToken();
+      if (remainingRefreshToken == null || remainingRefreshToken.isEmpty) {
+        AppLogger.warn(
+          LogTopic.auth,
+          'SessionController.restore: auth failed; clearing session',
+          error: error,
+          stackTrace: stack,
+        );
+        await _authRepository.logout();
+        _emit(const SessionState(
+          phase: SessionPhase.unauthenticated,
+        ));
+        return;
+      }
+
       AppLogger.warn(
         LogTopic.auth,
-        'SessionController.restore: auth failed; clearing session',
+        'SessionController.restore: transient failure during session '
+        'verification; keeping session for retry',
         error: error,
         stackTrace: stack,
       );
-      await _authRepository.logout();
       _emit(const SessionState(
         phase: SessionPhase.unauthenticated,
+        errorMessage: 'Could not verify your session. Please try again.',
       ));
     } on ApiException catch (error, stack) {
       // Network or server failure; stay unauthenticated but keep the

@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import '../../../app/router.dart';
 import '../../../core/location/location_display_provider.dart';
 import '../../../core/location/location_lifecycle_manager.dart';
+import '../../../core/location/location_permission_service.dart';
 import '../../../core/maps/geo_point.dart';
 import '../../../core/providers.dart';
 import '../../../core/theme/app_colors.dart';
@@ -19,9 +20,12 @@ import '../../../shared/widgets/error_state.dart';
 import '../../../shared/widgets/skeleton_loader.dart';
 import '../../../shared/widgets/status_chip.dart';
 import '../../delivery/application/active_delivery_controller.dart';
+import '../../delivery/application/delivery_socket_controller.dart';
 import '../../delivery/application/offers_controller.dart';
+import '../../delivery/application/pickup_session_controller.dart';
 import '../../delivery/domain/assignment_status.dart';
 import '../../delivery/domain/delivery_order.dart';
+import '../../delivery/domain/pickup_batch.dart';
 import '../../delivery/domain/rider_earnings.dart';
 import '../../delivery/domain/rider_profile.dart';
 import '../../delivery/domain/rider_stats.dart';
@@ -62,9 +66,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final RiderProfile? profile =
         ref.read<HomeDashboardController>(homeDashboardControllerProvider).profile;
     final bool isOnline = profile?.isOnline ?? false;
-    await ref
+    final bool streaming = await ref
         .read<LocationLifecycleManager>(locationLifecycleManagerProvider)
         .ensureRunningIfOnline(isOnline: isOnline);
+    if (!mounted) return;
+    // The backend already thinks this rider is online — likely from the
+    // same account signed in on another device — but this device never
+    // got permission to stream its own GPS, so it keeps showing whatever
+    // location the last device reported. Surface it instead of failing
+    // silently, with a direct path to fix it.
+    if (isOnline && !streaming) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            "You're online but this device isn't sharing its location — enable location permission",
+          ),
+          action: SnackBarAction(
+            label: 'Enable',
+            onPressed: () => unawaited(
+              ref
+                  .read<LocationPermissionService>(locationPermissionServiceProvider)
+                  .openAppSettings(),
+            ),
+          ),
+          duration: const Duration(seconds: 8),
+        ),
+      );
+    }
   }
 
   Future<void> _handleToggle({required bool goOnline}) async {
@@ -130,7 +158,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ref.read<OffersController>(offersControllerProvider);
     final ActiveDeliveryController active =
         ref.read<ActiveDeliveryController>(activeDeliveryControllerProvider);
-    if (active.current != null) return;
+    if (active.batch.isNotEmpty) return;
     for (final DeliveryOrder offer in offers.offers) {
       if (_shownOfferIds.contains(offer.orderId)) continue;
       _shownOfferIds.add(offer.orderId);
@@ -149,6 +177,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ref.watch<OffersController>(offersControllerProvider);
     final ActiveDeliveryController active =
         ref.watch<ActiveDeliveryController>(activeDeliveryControllerProvider);
+    final PickupSessionController pickupSession =
+        ref.watch<PickupSessionController>(pickupSessionControllerProvider);
     final LocationDisplay? locationDisplay =
         ref.watch(locationDisplayProvider).value;
 
@@ -166,6 +196,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       unawaited(_autoPresentOfferIfNeeded(context, ref));
     });
 
+    // Item 6/9: the home banner tracks the batch as a whole, not just the
+    // focused order — while any order in the batch still needs scanning
+    // or pickup confirmation, the rider is routed back into the pickup
+    // flow rather than the single-order delivery screen.
+    final List<DeliveryOrder> batch = active.batch;
+    final bool needsPickupPhase = batch.any(
+      (DeliveryOrder o) =>
+          pickupSession.statusFor(o.orderId) != PickupScanStatus.pickedUp,
+    );
+    final int pickedUpCount = batch
+        .where((DeliveryOrder o) =>
+            pickupSession.statusFor(o.orderId) == PickupScanStatus.pickedUp)
+        .length;
     final DeliveryOrder? activeOrder = active.current;
 
     return Scaffold(
@@ -173,7 +216,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       body: SafeArea(
         child: RefreshIndicator(
           color: AppColors.black,
-          onRefresh: () => dashboard.refresh(),
+          onRefresh: () => Future.wait(<Future<void>>[
+            dashboard.refresh(),
+            ref
+                .read<DeliverySocketController>(deliverySocketControllerProvider)
+                .refreshOrders(),
+          ]),
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
@@ -196,9 +244,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               const SizedBox(height: 16),
 
-              // ── Active delivery banner ─────────────────────────────────
-              if (activeOrder != null) ...<Widget>[
-                _ActiveDeliveryCard(order: activeOrder),
+              // ── Active delivery / pickup-batch banner ────────────────────
+              if (batch.isNotEmpty) ...<Widget>[
+                needsPickupPhase
+                    ? _PickupBatchCard(
+                        pickedUp: pickedUpCount,
+                        total: batch.length,
+                      )
+                    : _ActiveDeliveryCard(order: activeOrder!),
                 const SizedBox(height: 16),
               ],
 
@@ -484,6 +537,77 @@ class _ActiveDeliveryCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pickup-batch banner — shown while the rider still has orders to scan
+// and collect at the store, before moving into the delivery phase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PickupBatchCard extends StatelessWidget {
+  const _PickupBatchCard({required this.pickedUp, required this.total});
+
+  final int pickedUp;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => context.push(AppRoutes.pickupBatch),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: <Widget>[
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.offWhite,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.qr_code_scanner,
+                  size: 24,
+                  color: AppColors.charcoal,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      'Scan orders ($pickedUp/$total)',
+                      style: AppTypography.label
+                          .copyWith(color: AppColors.charcoal),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Collect your orders from the store',
+                      style: AppTypography.micro
+                          .copyWith(color: AppColors.muted),
+                    ),
+                  ],
+                ),
+              ),
+              const StatusChip(label: 'PICKUP', tone: StatusTone.pending),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right,
+                  size: 20, color: AppColors.muted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Stats row — redesigned to prevent truncation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -538,6 +662,7 @@ class _StatsRow extends StatelessWidget {
     final int delivered = stats?.deliveredToday ?? 0;
     final double rating =
         (profile?.rating ?? stats?.rating ?? 0).toDouble();
+    final bool commissionEnabled = profile?.commissionEnabled ?? true;
 
     // Use a 2-column top row + full-width bottom card layout so
     // values never get truncated on narrow screens.
@@ -546,15 +671,25 @@ class _StatsRow extends StatelessWidget {
         // Top row: Earnings (wider) + Delivered
         Row(
           children: <Widget>[
-            // Earnings — given more space (flex 3) so ₹1,234 fits
+            // Earnings — given more space (flex 3) so ₹1,234 fits.
+            // Relabeled to a neutral "On salary" tile while commission
+            // is disabled (item 10) rather than showing a stale/zero
+            // earnings figure.
             Expanded(
               flex: 3,
-              child: _StatTile(
-                label: 'Today\'s Earnings',
-                value: _HomeScreenState.formatRupees(earningsValue),
-                icon: Icons.payments_outlined,
-                iconColor: AppColors.success,
-              ),
+              child: commissionEnabled
+                  ? _StatTile(
+                      label: 'Today\'s Earnings',
+                      value: _HomeScreenState.formatRupees(earningsValue),
+                      icon: Icons.payments_outlined,
+                      iconColor: AppColors.success,
+                    )
+                  : const _StatTile(
+                      label: 'Pay type',
+                      value: 'Salary',
+                      icon: Icons.badge_outlined,
+                      iconColor: AppColors.success,
+                    ),
             ),
             const SizedBox(width: 12),
             // Delivered

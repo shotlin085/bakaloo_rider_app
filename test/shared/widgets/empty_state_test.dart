@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/shared/widgets/empty_state.dart';
+import 'package:bakaloo_rider_app/shared/widgets/empty_state.dart';
 
 void main() {
   Future<void> pumpEmpty(

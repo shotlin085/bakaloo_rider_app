@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
 
 /// Unit test to verify the Navigate button logic without requiring
 /// the full widget tree or GoogleMap platform plugin.

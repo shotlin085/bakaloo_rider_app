@@ -1,9 +1,10 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/theme/app_colors.dart';
-import 'package:grolin_rider_app/core/theme/app_theme.dart';
-import 'package:grolin_rider_app/core/theme/app_typography.dart';
+import 'package:bakaloo_rider_app/core/theme/app_colors.dart';
+import 'package:bakaloo_rider_app/core/theme/app_theme.dart';
+import 'package:bakaloo_rider_app/core/theme/app_typography.dart';
 
 void main() {
   group('AppTheme.light()', () {

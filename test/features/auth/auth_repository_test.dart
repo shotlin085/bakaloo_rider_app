@@ -1,13 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
-import 'package:grolin_rider_app/core/network/api_exception.dart';
-import 'package:grolin_rider_app/core/storage/secure_token_store.dart';
-import 'package:grolin_rider_app/features/auth/data/auth_api.dart';
-import 'package:grolin_rider_app/features/auth/data/auth_repository.dart';
-import 'package:grolin_rider_app/features/auth/domain/auth_exception.dart';
-import 'package:grolin_rider_app/features/auth/domain/auth_session.dart';
-import 'package:grolin_rider_app/features/auth/domain/rider_user.dart';
+import 'package:bakaloo_rider_app/core/network/api_exception.dart';
+import 'package:bakaloo_rider_app/core/storage/secure_token_store.dart';
+import 'package:bakaloo_rider_app/features/auth/data/auth_api.dart';
+import 'package:bakaloo_rider_app/features/auth/data/auth_repository.dart';
+import 'package:bakaloo_rider_app/features/auth/domain/auth_exception.dart';
+import 'package:bakaloo_rider_app/features/auth/domain/auth_session.dart';
+import 'package:bakaloo_rider_app/features/auth/domain/rider_user.dart';
 
 class _MockAuthApi extends Mock implements AuthApi {}
 
@@ -257,6 +257,23 @@ void main() {
       // caller's job to decide.
       expect(await store.readAccessToken(), 'A');
       expect(await store.readRefreshToken(), 'R');
+    });
+
+    test('clears the store when the backend confirms the token is dead',
+        () async {
+      final _MockAuthApi api = _MockAuthApi();
+      when(() => api.refreshToken(refreshToken: any(named: 'refreshToken')))
+          .thenThrow(const ApiAuthException('refresh token expired'));
+      final SecureTokenStore store =
+          InMemoryTokenStore(accessToken: 'A', refreshToken: 'R');
+      final AuthRepository repo = AuthRepository(api: api, tokenStore: store);
+
+      expect(await repo.refreshTokens(), isFalse);
+      // A confirmed rejection (401/403 from the refresh endpoint itself)
+      // means the token really is dead, so this — and only this — case
+      // clears it locally too.
+      expect(await store.readAccessToken(), isNull);
+      expect(await store.readRefreshToken(), isNull);
     });
   });
 

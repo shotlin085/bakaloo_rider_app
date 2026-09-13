@@ -78,6 +78,33 @@ class _EarningsScreenState extends ConsumerState<EarningsScreen> {
     final bool loading = controller.isLoading(_selectedPeriod);
     final String? errorMsg = controller.error(_selectedPeriod);
     final RiderEarnings? earnings = controller.dataFor(_selectedPeriod);
+    final bool commissionEnabled =
+        ref.watch(riderProfileProvider).asData?.value.commissionEnabled ??
+            true;
+
+    if (!commissionEnabled) {
+      return Scaffold(
+        backgroundColor: AppColors.offWhite,
+        appBar: AppBar(
+          backgroundColor: AppColors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: AppColors.charcoal),
+            onPressed: () => context.pop(),
+          ),
+          title: Text(
+            'Earnings',
+            style: AppTypography.heading.copyWith(color: AppColors.charcoal),
+          ),
+        ),
+        body: const EmptyState(
+          icon: Icons.badge_outlined,
+          title: 'You\'re on a fixed salary',
+          body: 'Commission-based earnings are currently paused. '
+              'Your pay is handled outside the app.',
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: AppColors.offWhite,

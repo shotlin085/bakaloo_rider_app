@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/core/network/api_exception.dart';
+import 'package:bakaloo_rider_app/core/network/api_exception.dart';
 
 /// Unit tests for [ApiException.fromDio].
 ///

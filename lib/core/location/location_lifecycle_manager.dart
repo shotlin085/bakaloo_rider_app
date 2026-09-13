@@ -89,12 +89,17 @@ class LocationLifecycleManager {
 
   /// Called from the map screen / home screen on mount to ensure the
   /// stream is running if the rider is already online (e.g. after a
-  /// hot restart or app resume).
-  Future<void> ensureRunningIfOnline({bool isOnline = false}) async {
-    if (!isOnline) return;
+  /// hot restart or app resume, or a fresh login on a device the
+  /// backend already believes is online — same account, different
+  /// phone). Returns `true` once the GPS stream is confirmed running,
+  /// `false` when it couldn't start (missing permission/service) so the
+  /// caller can prompt the rider instead of silently leaving their live
+  /// location stuck on whatever the last device reported.
+  Future<bool> ensureRunningIfOnline({bool isOnline = false}) async {
+    if (!isOnline) return false;
     _isOnline = true;
-    if (isStreaming) return;
-    await _ensurePermissionAndStart(_currentProfile == LocationProfile.offline
+    if (isStreaming) return true;
+    return _ensurePermissionAndStart(_currentProfile == LocationProfile.offline
         ? LocationProfile.waitingOnline
         : _currentProfile);
   }
@@ -107,13 +112,13 @@ class LocationLifecycleManager {
   // Internals
   // ---------------------------------------------------------------------------
 
-  Future<void> _ensurePermissionAndStart(LocationProfile profile) async {
+  Future<bool> _ensurePermissionAndStart(LocationProfile profile) async {
     // Check / request permission first.
     final LocationPermissionResult result =
         await _permissionService.ensureWhileInUse();
     if (!result.canUseLocation) {
       // Permission denied or service off — can't stream.
-      return;
+      return false;
     }
 
     // Seed one immediate fix so the marker appears right away.
@@ -123,6 +128,7 @@ class LocationLifecycleManager {
     }
 
     await _startStream(profile);
+    return true;
   }
 
   Future<void> _startStream(LocationProfile profile) async {

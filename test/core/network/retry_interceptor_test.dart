@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/network/retry_interceptor.dart';
+import 'package:bakaloo_rider_app/core/network/retry_interceptor.dart';
 
 /// Minimal [HttpClientAdapter] stub.
 ///

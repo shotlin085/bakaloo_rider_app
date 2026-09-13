@@ -119,6 +119,9 @@ class _CompletionSummaryBodyState
 
   @override
   Widget build(BuildContext context) {
+    final bool commissionEnabled =
+        ref.watch(riderProfileProvider).asData?.value.commissionEnabled ??
+            true;
     return AppSheetScaffold(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -142,18 +145,20 @@ class _CompletionSummaryBodyState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  'You earned',
-                  style: AppTypography.label
-                      .copyWith(color: AppColors.muted),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '₹${widget.earnedAmount.toStringAsFixed(0)}',
-                  style: AppTypography.display
-                      .copyWith(color: AppColors.black),
-                ),
-                const SizedBox(height: 16),
+                if (commissionEnabled) ...<Widget>[
+                  Text(
+                    'You earned',
+                    style: AppTypography.label
+                        .copyWith(color: AppColors.muted),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '₹${widget.earnedAmount.toStringAsFixed(0)}',
+                    style: AppTypography.display
+                        .copyWith(color: AppColors.black),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 _SummaryRow(label: 'Order', value: '#${widget.orderNumber}'),
                 const SizedBox(height: 8),
                 _SummaryRow(label: 'Customer', value: widget.customerName),
@@ -163,23 +168,25 @@ class _CompletionSummaryBodyState
           const SizedBox(height: 12),
 
           // Today's total footer.
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  "Today's total",
-                  style: AppTypography.label
-                      .copyWith(color: AppColors.muted),
+          if (commissionEnabled) ...<Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    "Today's total",
+                    style: AppTypography.label
+                        .copyWith(color: AppColors.muted),
+                  ),
                 ),
-              ),
-              Text(
-                '₹${widget.totalEarningsToday.toStringAsFixed(0)}',
-                style: AppTypography.heading
-                    .copyWith(color: AppColors.charcoal),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
+                Text(
+                  '₹${widget.totalEarningsToday.toStringAsFixed(0)}',
+                  style: AppTypography.heading
+                      .copyWith(color: AppColors.charcoal),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
 
           AppButton(
             label: 'Got it',

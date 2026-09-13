@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
-import 'package:grolin_rider_app/features/delivery/domain/order_parse_exception.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/order_parse_exception.dart';
 
 void main() {
   group('AssignmentStatus.parse', () {

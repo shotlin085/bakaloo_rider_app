@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/widgets.dart';
 
+import '../../../core/maps/geo_point.dart';
 import '../../../core/realtime/socket_client.dart';
 import '../../../core/realtime/socket_events.dart';
 import '../../../core/utils/app_logger.dart';
@@ -11,6 +13,7 @@ import '../domain/assignment_status.dart';
 import '../domain/delivery_order.dart';
 import 'active_delivery_controller.dart';
 import 'offers_controller.dart';
+import 'pickup_session_controller.dart';
 
 /// Optional notification sink. The MVP delivery socket pipes
 /// `notification` payloads here; the real notifications feature plugs
@@ -69,21 +72,32 @@ class DeliverySocketController with WidgetsBindingObserver {
     required OffersController offers,
     required ActiveDeliveryController activeDelivery,
     required DeliveryRepository repository,
+    PickupSessionController? pickupSession,
     NotificationSink notifications = const NoOpNotificationSink(),
     WidgetsBinding? binding,
+    ValueListenable<GeoPoint?>? riderLocation,
   }) : _socket = socket,
        _offers = offers,
        _activeDelivery = activeDelivery,
        _repository = repository,
+       _pickupSession = pickupSession,
        _notifications = notifications,
-       _binding = binding;
+       _binding = binding,
+       _riderLocation = riderLocation;
 
   final SocketClient _socket;
   final OffersController _offers;
   final ActiveDeliveryController _activeDelivery;
   final DeliveryRepository _repository;
+  final PickupSessionController? _pickupSession;
   final NotificationSink _notifications;
   final WidgetsBinding? _binding;
+
+  /// Live rider GPS fix, read at reconcile time so a fresh batch load
+  /// picks the real nearest-neighbor route's first stop as the initial
+  /// focus (item 8/9), not just whichever order the API happened to
+  /// list first.
+  final ValueListenable<GeoPoint?>? _riderLocation;
 
   final List<StreamSubscription<dynamic>> _subscriptions =
       <StreamSubscription<dynamic>>[];
@@ -91,9 +105,23 @@ class DeliverySocketController with WidgetsBindingObserver {
   bool _started = false;
   bool _lifecycleAttached = false;
 
+  /// True when the last "fresh batch" focus pick had to fall back to
+  /// time-based ordering because no GPS fix was available yet — cleared
+  /// (and corrected) the moment a real position arrives.
+  bool _pendingGpsFocusCorrection = false;
+
   /// Whether [start] has been called and [stop] has not yet been
   /// called. Public so tests can assert lifecycle behaviour.
   bool get isStarted => _started;
+
+  /// Manually re-syncs offers/active-delivery against `/delivery/orders`
+  /// — the same reconciliation [didChangeAppLifecycleState] runs on
+  /// app-foreground, exposed so the UI can offer an explicit "refresh"
+  /// action for when the rider doesn't want to wait for the next
+  /// background/foreground cycle (or a live socket event that, for
+  /// whatever reason — a dropped connection, a background gap — didn't
+  /// arrive).
+  Future<void> refreshOrders() => _reconcileOnResume();
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -125,12 +153,37 @@ class DeliverySocketController with WidgetsBindingObserver {
       _socket.on(SocketEvents.notification).listen(_onNotification),
     );
 
+    // Reconcile on every reconnect, not just app-foreground (R7.5).
+    // Mobile WebSocket connections drop and silently re-establish all
+    // the time on their own — battery optimization, a network blip, a
+    // ping timeout — with the app staying in the foreground the whole
+    // time, so AppLifecycleState.resumed never fires. Any order:status
+    // event the backend sent during that gap is gone for good (Socket.IO
+    // doesn't replay missed events), so without this, an order can sit
+    // stuck until the rider happens to background/foreground the app,
+    // pulls to refresh, or force-closes it — exactly the "still shows
+    // after live delivery/cancel, only a manual refresh clears it"
+    // symptom this was chasing.
+    _subscriptions.add(
+      _socket.statusStream.listen(_onSocketStatusChanged),
+    );
+
     // Attach lifecycle observer for foreground reconciliation (R7.5).
     final WidgetsBinding? binding = _binding ?? _maybeBinding();
     if (binding != null) {
       binding.addObserver(this);
       _lifecycleAttached = true;
     }
+
+    // A cold-start reconcile can race the GPS stream — the rider's first
+    // fix often hasn't arrived yet, so the initial nearest-neighbor focus
+    // pick may have to fall back to time-based ordering (see
+    // _reconcileOnResume). This listener catches the *first* GPS fix that
+    // arrives afterward and, if that fallback was used, corrects the
+    // focus exactly once — otherwise a wrong-but-permanent guess would
+    // stick around for the rest of the trip since focus is never
+    // re-evaluated once set (item 8/9: "perfect calculation").
+    _riderLocation?.addListener(_onRiderLocationAvailable);
 
     unawaited(_reconcileOnResume());
   }
@@ -151,6 +204,7 @@ class DeliverySocketController with WidgetsBindingObserver {
       await s.cancel();
     }
     _subscriptions.clear();
+    _riderLocation?.removeListener(_onRiderLocationAvailable);
 
     if (_lifecycleAttached) {
       final WidgetsBinding? binding = _binding ?? _maybeBinding();
@@ -183,12 +237,38 @@ class DeliverySocketController with WidgetsBindingObserver {
     }
   }
 
+  /// Reconciles on every transition into [SocketStatus.connected] —
+  /// covers reconnects that happen with the app already in the
+  /// foreground, which [didChangeAppLifecycleState] never sees. See the
+  /// [start] call site for why this matters.
+  void _onSocketStatusChanged(SocketStatus status) {
+    if (status != SocketStatus.connected) return;
+    AppLogger.info(
+      LogTopic.socket,
+      'Socket (re)connected: reconciling /delivery/orders',
+    );
+    unawaited(_reconcileOnResume());
+  }
+
   Future<void> _reconcileOnResume() async {
     try {
+      // Captured before the loop below claims focus for whichever order
+      // happens to be array-first in the API response — lets us tell
+      // "this reconcile is populating a previously-empty batch from
+      // scratch" apart from "the rider was already actively focused on
+      // something and this is just a routine resume refresh."
+      final bool wasEmptyBeforeThisReconcile = _activeDelivery.current == null;
+
       final List<DeliveryOrder> orders = await _repository.getOrders();
+      final Set<String> freshIds =
+          orders.map((DeliveryOrder o) => o.orderId).toSet();
       for (final DeliveryOrder order in orders) {
         switch (order.assignmentStatus) {
           case AssignmentStatus.assigned:
+            // Only reachable via the legacy offer-fan-out path (still
+            // dormant-but-present on the backend) — the firm-assignment
+            // resolver creates rows already ACCEPTED, so a rider on the
+            // new flow never observes `assigned` here.
             _offers.upsertOffer(order);
           case AssignmentStatus.accepted:
           case AssignmentStatus.inTransit:
@@ -199,6 +279,45 @@ class DeliverySocketController with WidgetsBindingObserver {
             break;
         }
       }
+
+      // /delivery/orders only ever lists orders still open for this
+      // rider — a cancelled/delivered order simply stops appearing in
+      // it. The loop above only ever adds/updates, so anything the
+      // rider was tracking locally that's now missing from a fresh
+      // fetch must have gone terminal server-side (e.g. an admin
+      // dashboard cancellation) without the live `order:status` socket
+      // event reaching this device — a background/foreground gap, or
+      // a dropped connection the socket client hadn't yet reconnected
+      // from. Prune it here instead of leaving it stuck until the
+      // rider force-closes and reopens the app.
+      for (final DeliveryOrder offer in _offers.offers.toList()) {
+        if (!freshIds.contains(offer.orderId)) {
+          _offers.removeOffer(offer.orderId);
+        }
+      }
+      for (final DeliveryOrder order in _activeDelivery.batch.toList()) {
+        if (!freshIds.contains(order.orderId)) {
+          _activeDelivery.remove(order.orderId);
+        }
+      }
+
+      // A fresh batch load (not a resume-with-existing-focus refresh)
+      // should focus the real nearest-neighbor route's first stop (item
+      // 8/9) — not just whichever order the API happened to list first.
+      // `setActiveDelivery` above already auto-claimed *some* order as
+      // focused the moment the batch went from empty to non-empty, so
+      // this explicitly re-focuses to the correct one when that
+      // happened.
+      if (wasEmptyBeforeThisReconcile) {
+        _refocusToNearestStop();
+        // No GPS fix yet means the pick above just fell back to
+        // time-based ordering — flag it so the very next GPS fix
+        // corrects it (see _onRiderLocationAvailable). A pick made
+        // *with* a real position needs no correction.
+        _pendingGpsFocusCorrection = _riderLocation?.value == null;
+      }
+
+      _pickupSession?.syncFromBatch(_activeDelivery.batch);
     } catch (e, stack) {
       AppLogger.warn(
         LogTopic.socket,
@@ -209,23 +328,47 @@ class DeliverySocketController with WidgetsBindingObserver {
     }
   }
 
+  /// Focuses the first stop of the real nearest-neighbor route among
+  /// the batch's in-transit orders (item 8/9). Shared by the initial
+  /// "fresh batch" pick in [_reconcileOnResume] and the one-time GPS
+  /// correction in [_onRiderLocationAvailable].
+  void _refocusToNearestStop() {
+    final List<DeliveryOrder> readyToDeliver = _activeDelivery.batch
+        .where((DeliveryOrder o) => o.assignmentStatus == AssignmentStatus.inTransit)
+        .toList();
+    final List<DeliveryOrder> sequenced =
+        DeliveryOrder.sequenceRoute(readyToDeliver, _riderLocation?.value);
+    if (sequenced.isNotEmpty) {
+      _activeDelivery.focusOrder(sequenced.first.orderId);
+    }
+  }
+
+  /// Fires on every rider GPS update. Only acts once: if the last
+  /// "fresh batch" focus pick had to guess without a position (see
+  /// [_reconcileOnResume]), the first real fix that arrives corrects it
+  /// — then never fires again, so it can't disturb a focus the rider
+  /// has since driven towards themselves.
+  void _onRiderLocationAvailable() {
+    if (!_pendingGpsFocusCorrection) return;
+    if (_riderLocation?.value == null) return;
+    _pendingGpsFocusCorrection = false;
+    _refocusToNearestStop();
+  }
+
   // ---------------------------------------------------------------------------
   // Event handlers
   // ---------------------------------------------------------------------------
 
   void _onOrderAssigned(Map<String, dynamic> payload) {
     AppLogger.info(LogTopic.socket, 'order:assigned received');
-    try {
-      final DeliveryOrder order = DeliveryOrder.fromJson(payload);
-      _offers.upsertOffer(order);
-    } catch (e, stack) {
-      AppLogger.warn(
-        LogTopic.parse,
-        'order:assigned: parse failed; dropping offer',
-        error: e,
-        stackTrace: stack,
-      );
-    }
+    // The firm-assignment resolver sends a deliberately minimal
+    // {orderId, status} payload — not a full order — so this event is a
+    // "go refetch your orders" signal, not something to parse a
+    // DeliveryOrder out of directly. (The legacy offer-fan-out path, if
+    // ever triggered via the dormant reject-requeue flow, sends a richer
+    // payload, but reconciling via a fetch handles that shape too — the
+    // full order comes back from GET /delivery/orders either way.)
+    unawaited(_reconcileOnResume());
   }
 
   void _onOrderExpired(Map<String, dynamic> payload) {
@@ -251,11 +394,22 @@ class DeliverySocketController with WidgetsBindingObserver {
       );
       return;
     }
-    final String? rawStatus = OrderParser.readStringOpt(
-      payload,
-      'assignmentStatus',
-      'assignment_status',
-    );
+    // The backend's order:status payload (see socketio.plugin.js's
+    // emitOrderUpdate and every _emitOrderUpdate/_emitOrderStatus call
+    // site across delivery.service.js and admin/orders/orders.service.js)
+    // always carries the field as `status` — never `assignmentStatus` /
+    // `assignment_status`. Those were the wrong keys from the start, so
+    // every live status push (admin dashboard cancel/deliver included)
+    // silently no-opped here; only a rider's own in-app actions ever
+    // updated anything, because those apply the transition locally
+    // instead of round-tripping through this parser. `assignmentStatus`
+    // is kept as a fallback in case a future payload shape uses it.
+    final String? rawStatus = OrderParser.readStringOpt(payload, 'status') ??
+        OrderParser.readStringOpt(
+          payload,
+          'assignmentStatus',
+          'assignment_status',
+        );
     if (rawStatus == null || rawStatus.isEmpty) {
       AppLogger.warn(
         LogTopic.socket,
@@ -277,6 +431,9 @@ class DeliverySocketController with WidgetsBindingObserver {
     }
     _offers.applyStatus(orderId, status);
     _activeDelivery.applyExternalStatus(orderId, status);
+    if (status == AssignmentStatus.delivered || status == AssignmentStatus.cancelled) {
+      _pickupSession?.remove(orderId);
+    }
   }
 
   void _onNotification(Map<String, dynamic> payload) {

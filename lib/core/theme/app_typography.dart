@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
 
-/// Typography scale for the Grolin Rider App.
+/// Typography scale for the Bakaloo Rider App.
 ///
 /// Sizes, line-heights, and weights match the scale defined in
 /// `design.md`. No `fontFamily` is set so the platform default ships

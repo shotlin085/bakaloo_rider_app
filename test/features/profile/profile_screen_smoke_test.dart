@@ -3,10 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/providers.dart';
-import 'package:grolin_rider_app/features/delivery/data/delivery_api.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_profile.dart';
-import 'package:grolin_rider_app/features/profile/presentation/profile_screen.dart';
+import 'package:bakaloo_rider_app/core/providers.dart';
+import 'package:bakaloo_rider_app/features/delivery/data/delivery_api.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_profile.dart';
+import 'package:bakaloo_rider_app/features/profile/presentation/profile_screen.dart';
 
 /// Stub [DeliveryApi] that returns a fixed [RiderProfile] from
 /// `getProfile`. All other methods throw, which keeps the test

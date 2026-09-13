@@ -121,11 +121,20 @@ class AuthRepository {
   ///
   /// Returns `false` when the refresh fails for any reason (network,
   /// 401, malformed body); the caller — typically the auth interceptor —
-  /// then forces the session back to the login screen.
+  /// then leaves the session as-is and surfaces the failure.
   ///
   /// On success, both tokens are written to the [SecureTokenStore]
   /// before returning so that the next request to the API client picks
   /// up the new access token automatically.
+  ///
+  /// Only a confirmed rejection (the backend explicitly says this
+  /// refresh token is invalid/expired — [ApiAuthException]) clears the
+  /// token store here. A transient failure (timeout, offline, 5xx)
+  /// deliberately leaves the existing refresh token in place: it may
+  /// still be perfectly valid, and callers must not treat "the refresh
+  /// call failed" as proof the session is dead — see
+  /// [SessionController.restore] which checks [SecureTokenStore] to
+  /// tell the two cases apart before deciding to log the rider out.
   Future<bool> refreshTokens() async {
     final String? refresh = await _tokenStore.readRefreshToken();
     if (refresh == null || refresh.isEmpty) return false;
@@ -138,16 +147,28 @@ class AuthRepository {
       );
       AppLogger.info(LogTopic.auth, 'refresh-token ok');
       return true;
-    } on ApiException catch (error, stack) {
+    } on ApiAuthException catch (error, stack) {
       AppLogger.warn(
         LogTopic.auth,
-        'refresh-token failed: ${error.message}',
+        'refresh-token rejected: ${error.message}',
         error: error,
         stackTrace: stack,
       );
-      // Caller decides whether to clear the session; we don't clear here
-      // because some transient errors (timeout) should not log the
-      // rider out.
+      // The backend confirmed this refresh token is actually dead
+      // (expired, revoked, or superseded by a login elsewhere) — no
+      // amount of retrying fixes this, so clear it now.
+      await _tokenStore.clear();
+      return false;
+    } on ApiException catch (error, stack) {
+      AppLogger.warn(
+        LogTopic.auth,
+        'refresh-token failed transiently: ${error.message}',
+        error: error,
+        stackTrace: stack,
+      );
+      // Network/timeout/server error — we have no evidence the refresh
+      // token itself is bad, so leave it in storage for the rider's
+      // next retry instead of forcing a false logout over a blip.
       return false;
     }
   }

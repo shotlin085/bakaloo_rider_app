@@ -2,12 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:mocktail/mocktail.dart';
 
-import 'package:grolin_rider_app/core/location/location_permission_service.dart';
-import 'package:grolin_rider_app/core/location/location_permission_status.dart';
-import 'package:grolin_rider_app/core/location/location_service.dart';
-import 'package:grolin_rider_app/core/network/api_exception.dart';
-import 'package:grolin_rider_app/features/delivery/data/delivery_api.dart';
-import 'package:grolin_rider_app/features/home/application/online_toggle_controller.dart';
+import 'package:bakaloo_rider_app/core/location/location_permission_service.dart';
+import 'package:bakaloo_rider_app/core/location/location_permission_status.dart';
+import 'package:bakaloo_rider_app/core/location/location_service.dart';
+import 'package:bakaloo_rider_app/core/network/api_exception.dart';
+import 'package:bakaloo_rider_app/features/delivery/data/delivery_api.dart';
+import 'package:bakaloo_rider_app/features/home/application/online_toggle_controller.dart';
 
 class _MockDeliveryApi extends Mock implements DeliveryApi {}
 

@@ -30,6 +30,8 @@ class RiderProfile {
     this.name,
     this.phone,
     this.avatarUrl,
+    this.commissionEnabled = true,
+    this.businessUpiId,
   });
 
   /// Parses the live `/delivery/profile` snake_case response.
@@ -64,6 +66,17 @@ class RiderProfile {
       name: OrderParser.readStringOpt(j, 'name'),
       phone: OrderParser.readStringOpt(j, 'phone'),
       avatarUrl: OrderParser.readStringOpt(j, 'avatarUrl', 'avatar_url'),
+      commissionEnabled: OrderParser.readBool(
+        j,
+        'commissionEnabled',
+        'commission_enabled',
+        true,
+      ),
+      businessUpiId: OrderParser.readStringOpt(
+        j,
+        'businessUpiId',
+        'business_upi_id',
+      ),
     );
   }
 
@@ -86,6 +99,8 @@ class RiderProfile {
         if (name != null) 'name': name,
         if (phone != null) 'phone': phone,
         if (avatarUrl != null) 'avatarUrl': avatarUrl,
+        'commissionEnabled': commissionEnabled,
+        if (businessUpiId != null) 'businessUpiId': businessUpiId,
       };
 
   /// Returns a copy with the supplied fields replaced.
@@ -107,6 +122,8 @@ class RiderProfile {
     String? name,
     String? phone,
     String? avatarUrl,
+    bool? commissionEnabled,
+    String? businessUpiId,
   }) {
     return RiderProfile(
       id: id ?? this.id,
@@ -126,6 +143,8 @@ class RiderProfile {
       name: name ?? this.name,
       phone: phone ?? this.phone,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      commissionEnabled: commissionEnabled ?? this.commissionEnabled,
+      businessUpiId: businessUpiId ?? this.businessUpiId,
     );
   }
 
@@ -188,6 +207,20 @@ class RiderProfile {
   /// Avatar URL. Null until uploaded.
   final String? avatarUrl;
 
+  /// Whether rider commission/earnings are currently active platform-wide.
+  ///
+  /// `false` while riders are salary-based (item 10) — the app hides
+  /// earning figures rather than trusting them to read zero, since
+  /// historical `rider_earnings` rows are left untouched when the flag
+  /// flips. Defaults to `true` so an older backend response missing
+  /// this field doesn't unexpectedly hide earnings.
+  final bool commissionEnabled;
+
+  /// Business UPI ID (e.g. `name@upi`) admins configure for the payment QR
+  /// shown to COD customers at delivery time. Null when not configured —
+  /// callers should hide the QR-collection step in that case.
+  final String? businessUpiId;
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
@@ -208,7 +241,9 @@ class RiderProfile {
         other.bankName == bankName &&
         other.name == name &&
         other.phone == phone &&
-        other.avatarUrl == avatarUrl;
+        other.avatarUrl == avatarUrl &&
+        other.commissionEnabled == commissionEnabled &&
+        other.businessUpiId == businessUpiId;
   }
 
   @override
@@ -230,6 +265,8 @@ class RiderProfile {
         name,
         phone,
         avatarUrl,
+        commissionEnabled,
+        businessUpiId,
       );
 
   @override

@@ -1,5 +1,5 @@
-name: grolin_rider_app
-description: "Grolin Rider App - delivery partner app for the Grolin grocery platform."
+name: bakaloo_rider_app
+description: "Bakaloo Rider App - delivery partner app for the Bakaloo grocery platform."
 publish_to: 'none'
 
 version: 0.1.0+1
@@ -45,6 +45,12 @@ dependencies:
   image_picker: ^1.2.2
   cached_network_image: ^3.4.1
   flutter_image_compress: ^2.4.0
+
+  # QR pickup scanning
+  mobile_scanner: ^7.1.2
+
+  # QR display (UPI collection payment QR)
+  qr_flutter: ^4.1.0
 
   # File system utilities
   path_provider: ^2.1.5

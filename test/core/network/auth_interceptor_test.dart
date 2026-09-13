@@ -5,8 +5,8 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/network/auth_interceptor.dart';
-import 'package:grolin_rider_app/core/storage/secure_token_store.dart';
+import 'package:bakaloo_rider_app/core/network/auth_interceptor.dart';
+import 'package:bakaloo_rider_app/core/storage/secure_token_store.dart';
 
 /// Tests for [AuthInterceptor], focused on Property 1 from the design:
 /// - At most one refresh is in flight at any instant.

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_profile.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_profile.dart';
 
 /// The exact live profile JSON shape from the backend contract.
 const Map<String, dynamic> _liveProfileJson = <String, dynamic>{

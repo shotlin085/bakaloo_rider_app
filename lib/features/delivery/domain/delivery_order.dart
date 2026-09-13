@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../core/maps/geo.dart';
+import '../../../core/maps/geo_point.dart';
 import '../data/order_parser.dart';
 import 'assignment_status.dart';
 import 'delivery_address.dart';
@@ -36,6 +38,10 @@ class DeliveryOrder {
     required this.customerAddress,
     required this.storeAddress,
     required this.items,
+    this.deliveryMode,
+    this.quickDeliverySelected = false,
+    this.scheduledSlotStart,
+    this.createdAt,
   });
 
   /// Lenient parser.
@@ -111,7 +117,26 @@ class DeliveryOrder {
       items: OrderParser.readMapList(j, 'items')
           .map<DeliveryItem>(DeliveryItem.fromJson)
           .toList(growable: false),
+      deliveryMode: OrderParser.readStringOpt(j, 'deliveryMode', 'delivery_mode'),
+      quickDeliverySelected:
+          OrderParser.readBool(j, 'quickDeliverySelected', 'quick_delivery_selected'),
+      scheduledSlotStart: _readDateTimeOpt(
+        j,
+        'scheduledSlotStart',
+        'scheduled_slot_start',
+      ),
+      createdAt: _readDateTimeOpt(j, 'createdAt', 'created_at'),
     );
+  }
+
+  static DateTime? _readDateTimeOpt(
+    Map<String, dynamic> j,
+    String camelKey,
+    String snakeKey,
+  ) {
+    final String? raw = OrderParser.readStringOpt(j, camelKey, snakeKey);
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
   }
 
   /// Serialises to camelCase JSON (R19.3 round-trip).
@@ -129,6 +154,11 @@ class DeliveryOrder {
         'customerAddress': customerAddress.toJson(),
         'storeAddress': storeAddress.toJson(),
         'items': items.map((DeliveryItem i) => i.toJson()).toList(),
+        if (deliveryMode != null) 'deliveryMode': deliveryMode,
+        'quickDeliverySelected': quickDeliverySelected,
+        if (scheduledSlotStart != null)
+          'scheduledSlotStart': scheduledSlotStart!.toIso8601String(),
+        if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
       };
 
   /// Returns a copy with the supplied fields replaced.
@@ -146,6 +176,10 @@ class DeliveryOrder {
     DeliveryAddress? customerAddress,
     DeliveryAddress? storeAddress,
     List<DeliveryItem>? items,
+    String? deliveryMode,
+    bool? quickDeliverySelected,
+    DateTime? scheduledSlotStart,
+    DateTime? createdAt,
   }) {
     return DeliveryOrder(
       orderId: orderId ?? this.orderId,
@@ -161,6 +195,10 @@ class DeliveryOrder {
       customerAddress: customerAddress ?? this.customerAddress,
       storeAddress: storeAddress ?? this.storeAddress,
       items: items ?? this.items,
+      deliveryMode: deliveryMode ?? this.deliveryMode,
+      quickDeliverySelected: quickDeliverySelected ?? this.quickDeliverySelected,
+      scheduledSlotStart: scheduledSlotStart ?? this.scheduledSlotStart,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 
@@ -204,6 +242,134 @@ class DeliveryOrder {
   /// Line items in the order.
   final List<DeliveryItem> items;
 
+  /// `ASAP` or `SCHEDULED`. Null if the backend response didn't include it
+  /// (older cached data) — treated as ASAP for sequencing purposes.
+  final String? deliveryMode;
+
+  /// Whether the customer paid the Quick Delivery ("Express") surcharge —
+  /// the highest-priority tier in multi-stop sequencing (item 8/9).
+  final bool quickDeliverySelected;
+
+  /// Start of the customer's promised delivery window, for `SCHEDULED`
+  /// orders. Null for `ASAP` orders, which have no fixed window.
+  final DateTime? scheduledSlotStart;
+
+  /// When the order was placed — the fallback sequencing key for `ASAP`
+  /// orders (whichever has been waiting longest goes first).
+  final DateTime? createdAt;
+
+  /// Multi-stop delivery sequencing (item 8/9): Quick Delivery ("Express")
+  /// orders always come before everything else. Within the same tier,
+  /// whichever order has the earlier "promised" moment goes first — a
+  /// scheduled order's window start if it has one, otherwise when the
+  /// order was placed (so a `SCHEDULED` order with no parsed slot still
+  /// sequences sanely instead of sorting as "no promise at all").
+  /// Orders with neither timestamp sort last within their tier, stably.
+  static int compareDeliveryPriority(DeliveryOrder a, DeliveryOrder b) {
+    final int tierCompare =
+        _priorityTier(a).compareTo(_priorityTier(b));
+    if (tierCompare != 0) return tierCompare;
+
+    final DateTime? aKey = a.scheduledSlotStart ?? a.createdAt;
+    final DateTime? bKey = b.scheduledSlotStart ?? b.createdAt;
+    if (aKey == null && bKey == null) return 0;
+    if (aKey == null) return 1;
+    if (bKey == null) return -1;
+    return aKey.compareTo(bKey);
+  }
+
+  static int _priorityTier(DeliveryOrder order) =>
+      order.quickDeliverySelected ? 0 : 1;
+
+  /// This order's customer location as a [GeoPoint], or `null` when it
+  /// hasn't been geocoded yet.
+  GeoPoint? get customerPoint {
+    final double? lat = customerAddress.lat;
+    final double? lng = customerAddress.lng;
+    if (lat == null || lng == null) return null;
+    return GeoPoint(lat, lng);
+  }
+
+  /// Great-circle distance from [from] to this order's customer
+  /// location, or `null` when the customer's coordinates aren't known
+  /// yet (e.g. address not geocoded).
+  double? distanceFromMeters(GeoPoint from) {
+    final GeoPoint? point = customerPoint;
+    if (point == null) return null;
+    return Geo.distanceMeters(from, point);
+  }
+
+  /// Real multi-stop route sequencing (item 8/9): a greedy
+  /// nearest-neighbor path, not a single flat sort. The first stop is
+  /// whichever [orders] is closest to [riderPosition]; the *second* stop
+  /// is whichever remaining order is closest to the *first stop* (not
+  /// back to the rider), and so on — "closest next, then closest from
+  /// there" — the same logic a human dispatcher or Google Maps'
+  /// multi-stop optimizer would apply, instead of just ranking every
+  /// stop by its distance from one fixed point.
+  ///
+  /// Express ("quick delivery") orders are still sequenced as a block
+  /// ahead of standard/scheduled ones (the tier rule from
+  /// [compareDeliveryPriority]) — the standard-tier chain simply
+  /// continues from wherever the express chain's last stop was, instead
+  /// of restarting from the rider.
+  ///
+  /// Falls back to [compareDeliveryPriority]'s time-based ordering
+  /// whenever there's nothing to measure distance from or to (no GPS
+  /// fix yet, or unknown customer coordinates).
+  static List<DeliveryOrder> sequenceRoute(
+    List<DeliveryOrder> orders,
+    GeoPoint? riderPosition,
+  ) {
+    final List<DeliveryOrder> express =
+        orders.where((DeliveryOrder o) => o.quickDeliverySelected).toList();
+    final List<DeliveryOrder> standard =
+        orders.where((DeliveryOrder o) => !o.quickDeliverySelected).toList();
+
+    final List<DeliveryOrder> sequenced = <DeliveryOrder>[];
+    GeoPoint? cursor = riderPosition;
+
+    for (final List<DeliveryOrder> tier in <List<DeliveryOrder>>[
+      express,
+      standard,
+    ]) {
+      final List<DeliveryOrder> remaining = List<DeliveryOrder>.of(tier);
+      while (remaining.isNotEmpty) {
+        final DeliveryOrder next = _nearestTo(remaining, cursor);
+        sequenced.add(next);
+        remaining.remove(next);
+        cursor = next.customerPoint ?? cursor;
+      }
+    }
+
+    return sequenced;
+  }
+
+  /// Picks whichever of [candidates] is closest to [from], falling back
+  /// to [compareDeliveryPriority]'s stable time-based ordering when
+  /// [from] is `null` or no candidate has known coordinates.
+  static DeliveryOrder _nearestTo(
+    List<DeliveryOrder> candidates,
+    GeoPoint? from,
+  ) {
+    DeliveryOrder? best;
+    double? bestDistance;
+    if (from != null) {
+      for (final DeliveryOrder order in candidates) {
+        final double? distance = order.distanceFromMeters(from);
+        if (distance == null) continue;
+        if (bestDistance == null || distance < bestDistance) {
+          best = order;
+          bestDistance = distance;
+        }
+      }
+    }
+    if (best != null) return best;
+    final List<DeliveryOrder> sorted = List<DeliveryOrder>.of(candidates)
+      ..sort(compareDeliveryPriority);
+    return sorted.first;
+  }
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
@@ -220,6 +386,10 @@ class DeliveryOrder {
     if (other.estimatedDuration != estimatedDuration) return false;
     if (other.customerAddress != customerAddress) return false;
     if (other.storeAddress != storeAddress) return false;
+    if (other.deliveryMode != deliveryMode) return false;
+    if (other.quickDeliverySelected != quickDeliverySelected) return false;
+    if (other.scheduledSlotStart != scheduledSlotStart) return false;
+    if (other.createdAt != createdAt) return false;
     if (other.items.length != items.length) return false;
     for (int i = 0; i < items.length; i++) {
       if (other.items[i] != items[i]) return false;
@@ -241,6 +411,10 @@ class DeliveryOrder {
         estimatedDuration,
         customerAddress,
         storeAddress,
+        deliveryMode,
+        quickDeliverySelected,
+        scheduledSlotStart,
+        createdAt,
         Object.hashAll(items),
       );
 

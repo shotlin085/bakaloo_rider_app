@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,16 +23,18 @@ import '../../../core/utils/external_nav_launcher.dart';
 import '../../../shared/widgets/app_button.dart';
 import '../application/active_delivery_controller.dart';
 import '../application/active_delivery_map_controller.dart';
+import '../application/delivery_socket_controller.dart';
 import '../data/delivery_api.dart' show CancelDeliveryReason;
 import '../domain/assignment_status.dart';
+import '../domain/collected_payment.dart';
 import '../domain/delivery_address.dart';
 import '../domain/delivery_order.dart';
 import '../domain/delivery_outcome.dart';
 import '../domain/store_info.dart';
 import 'camera_director.dart';
 import 'cancel_delivery_sheet.dart';
+import 'collect_payment_sheet.dart';
 import 'completion_summary_sheet.dart';
-import 'delivery_otp_sheet.dart';
 import 'demo_complete_sheet.dart';
 import 'pickup_sheet.dart';
 
@@ -77,6 +80,13 @@ class _ActiveDeliveryMapScreenState
 
   String? _appliedOrderId;
   AssignmentStatus? _appliedStatus;
+
+  /// orderIds of every in-transit batch order the map was last rendered
+  /// for. Lets [build] re-apply the map when a *different* batch order
+  /// is picked up or delivered mid-trip — not just when the focused
+  /// order itself changes — so the "other stops" pins/strip stay
+  /// current (item 8/9).
+  Set<String> _appliedInTransitIds = const <String>{};
 
   String? _summaryShownForOrderId;
   bool _summaryVisible = false;
@@ -160,7 +170,10 @@ class _ActiveDeliveryMapScreenState
         .read<ActiveDeliveryMapController>(activeDeliveryMapControllerProvider);
     final StoreInfo? store =
         ref.read<AsyncValue<StoreInfo>>(storeInfoProvider).value;
-    map.applyOrder(order, store);
+    final List<DeliveryOrder> batch = ref
+        .read<ActiveDeliveryController>(activeDeliveryControllerProvider)
+        .batch;
+    map.applyOrder(order, store, batch: batch);
   }
 
   @override
@@ -216,9 +229,9 @@ class _ActiveDeliveryMapScreenState
 
   @override
   Widget build(BuildContext context) {
-    final DeliveryOrder? order = ref
-        .watch<ActiveDeliveryController>(activeDeliveryControllerProvider)
-        .current;
+    final ActiveDeliveryController activeDelivery = ref
+        .watch<ActiveDeliveryController>(activeDeliveryControllerProvider);
+    final DeliveryOrder? order = activeDelivery.current;
 
     if (order == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -237,12 +250,20 @@ class _ActiveDeliveryMapScreenState
       );
     }
 
+    final Set<String> inTransitIds = activeDelivery.batch
+        .where((DeliveryOrder o) => o.assignmentStatus == AssignmentStatus.inTransit)
+        .map((DeliveryOrder o) => o.orderId)
+        .toSet();
+    final bool otherStopsChanged = !setEquals(_appliedInTransitIds, inTransitIds);
+
     if (order.orderId != _appliedOrderId ||
-        order.assignmentStatus != _appliedStatus) {
+        order.assignmentStatus != _appliedStatus ||
+        otherStopsChanged) {
       final bool phaseChanged = _appliedOrderId == order.orderId &&
           _appliedStatus != order.assignmentStatus;
       _appliedOrderId = order.orderId;
       _appliedStatus = order.assignmentStatus;
+      _appliedInTransitIds = inTransitIds;
       if (phaseChanged) {
         ref.read<CameraDirector>(cameraDirectorProvider).resetPhaseFit();
       }
@@ -291,7 +312,14 @@ class _ActiveDeliveryMapScreenState
                     top: MediaQuery.viewPaddingOf(context).top + 12,
                     left: 16,
                     right: 16,
-                    child: _NavTopBar(status: order.assignmentStatus),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        _NavTopBar(status: order.assignmentStatus),
+                        const SizedBox(height: 8),
+                        const _StopsStrip(),
+                      ],
+                    ),
                   ),
                   // Floating recenter button — bottom-right, clear of panel.
                   Positioned(
@@ -529,7 +557,34 @@ class _NavTopBar extends ConsumerWidget {
               ],
             ),
           ),
+        const SizedBox(width: 8),
+        _RefreshButton(
+          onPressed: () => ref
+              .read<DeliverySocketController>(deliverySocketControllerProvider)
+              .refreshOrders(),
+        ),
       ],
+    );
+  }
+}
+
+/// Manually re-syncs the batch against the server — a rider-visible
+/// escape hatch for when an admin-side change (cancellation, status
+/// update) hasn't yet reached this device live, so the order doesn't
+/// stay stuck until the rider force-closes and reopens the app.
+class _RefreshButton extends StatelessWidget {
+  const _RefreshButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onPressed,
+      customBorder: const CircleBorder(),
+      child: _GlassCard(
+        child: const Icon(Icons.refresh, size: 18, color: AppColors.charcoal),
+      ),
     );
   }
 }
@@ -556,6 +611,114 @@ class _GlassCard extends StatelessWidget {
         ],
       ),
       child: child,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stops strip — every in-transit batch order at once, ranked by
+// distance (item 8/9: "map inside both order show, calculate which
+// closest and which longest").
+// ---------------------------------------------------------------------------
+
+class _StopsStrip extends ConsumerWidget {
+  const _StopsStrip();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final List<DeliveryStopInfo> stops = ref
+        .watch<ActiveDeliveryMapController>(activeDeliveryMapControllerProvider)
+        .stops;
+    // Nothing to compare when there's only one (or zero) stop — the
+    // normal single-destination map/panel already covers that case.
+    if (stops.length < 2) return const SizedBox.shrink();
+
+    final List<DeliveryStopInfo> sorted = List<DeliveryStopInfo>.of(stops)
+      ..sort((DeliveryStopInfo a, DeliveryStopInfo b) => a.rank.compareTo(b.rank));
+
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        // A fresh controller each build means this always renders from
+        // scroll offset 0 — without it, Flutter's PageStorage restores
+        // whatever offset this Scrollable last had (e.g. from an earlier
+        // 3+ stop batch), clipping the closest stop's badge/prefix under
+        // the left edge on the very first frame.
+        controller: ScrollController(),
+        scrollDirection: Axis.horizontal,
+        itemCount: sorted.length,
+        separatorBuilder: (BuildContext context, int index) => const SizedBox(width: 8),
+        itemBuilder: (BuildContext context, int index) {
+          final DeliveryStopInfo stop = sorted[index];
+          return _StopChip(
+            stop: stop,
+            onTap: stop.isFocused
+                ? null
+                : () => ref
+                    .read<ActiveDeliveryController>(activeDeliveryControllerProvider)
+                    .focusOrder(stop.order.orderId),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _StopChip extends StatelessWidget {
+  const _StopChip({required this.stop, required this.onTap});
+
+  final DeliveryStopInfo stop;
+  final VoidCallback? onTap;
+
+  static String _distanceLabel(double? meters) {
+    if (meters == null) return '';
+    if (meters < 1000) return '${meters.round()} m';
+    return '${(meters / 1000).toStringAsFixed(1)} km';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String distance = _distanceLabel(stop.distanceMeters);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: _GlassCard(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Container(
+                width: 18,
+                height: 18,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: stop.isFocused ? AppColors.black : AppColors.offWhite,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '${stop.rank}',
+                  style: AppTypography.micro.copyWith(
+                    color: stop.isFocused ? AppColors.white : AppColors.charcoal,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                distance.isEmpty
+                    ? '#${stop.order.orderNumber}'
+                    : '#${stop.order.orderNumber} · $distance',
+                style: AppTypography.micro.copyWith(color: AppColors.charcoal),
+              ),
+              if (stop.order.quickDeliverySelected) ...<Widget>[
+                const SizedBox(width: 4),
+                const Icon(Icons.flash_on, size: 12, color: AppColors.warning),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -755,13 +918,16 @@ class _StepLine extends StatelessWidget {
   }
 }
 
-class _PanelHeader extends StatelessWidget {
+class _PanelHeader extends ConsumerWidget {
   const _PanelHeader({required this.order});
 
   final DeliveryOrder order;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool commissionEnabled =
+        ref.watch(riderProfileProvider).asData?.value.commissionEnabled ??
+            true;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 8, 4),
       child: Row(
@@ -776,7 +942,9 @@ class _PanelHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '₹${order.riderEarning.toStringAsFixed(0)}',
+                  commissionEnabled
+                      ? '₹${order.riderEarning.toStringAsFixed(0)}'
+                      : 'In progress',
                   style:
                       AppTypography.title.copyWith(color: AppColors.black),
                 ),
@@ -937,6 +1105,14 @@ class _InTransitSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final DeliveryAddress addr = order.customerAddress;
     final bool showDemo = ref.watch<Env>(envProvider).enableDevAffordances;
+    final List<DeliveryStopInfo> stops = ref
+        .watch<ActiveDeliveryMapController>(activeDeliveryMapControllerProvider)
+        .stops;
+    final ActiveDeliveryController deliveryController =
+        ref.watch<ActiveDeliveryController>(activeDeliveryControllerProvider);
+    final bool isCod = order.paymentMethod.toUpperCase() == 'COD';
+    final CollectedPayment? collected =
+        deliveryController.collectedPaymentFor(order.orderId);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
@@ -948,6 +1124,7 @@ class _InTransitSheet extends ConsumerWidget {
             subtitle: addr.landmark != null && addr.landmark!.isNotEmpty
                 ? '${addr.address} • ${addr.landmark}'
                 : addr.address,
+            paymentMethod: order.paymentMethod,
           ),
           const SizedBox(height: 16),
           Row(
@@ -969,17 +1146,43 @@ class _InTransitSheet extends ConsumerWidget {
                   variant: AppButtonVariant.secondary,
                   leadingIcon: Icons.navigation_outlined,
                   onPressed: addr.lat != null && addr.lng != null
-                      ? () => _onNavigate(ref, addr.lat!, addr.lng!)
+                      ? () => _onNavigate(ref, stops, addr.lat!, addr.lng!)
                       : null,
                 ),
               ),
             ],
           ),
+          if (isCod) ...<Widget>[
+            const SizedBox(height: 8),
+            AppButton(
+              label: collected == null
+                  ? 'Collect payment'
+                  : 'Payment collected · Edit',
+              variant: collected == null
+                  ? AppButtonVariant.primary
+                  : AppButtonVariant.secondary,
+              leadingIcon: collected == null
+                  ? Icons.qr_code_outlined
+                  : Icons.check_circle_outline,
+              onPressed: () => _onCollectPayment(context, ref),
+            ),
+          ],
           const SizedBox(height: 8),
           AppButton(
             label: 'Deliver',
-            onPressed: () => _onDeliver(context),
+            onPressed: (!isCod || collected != null)
+                ? () => _onDeliver(context, collected, ref)
+                : null,
           ),
+          if (deliveryController.batch.length > 1) ...<Widget>[
+            const SizedBox(height: 8),
+            AppButton(
+              label: 'Skip for now',
+              variant: AppButtonVariant.secondary,
+              leadingIcon: Icons.skip_next_outlined,
+              onPressed: () => deliveryController.skip(order.orderId),
+            ),
+          ],
           if (showDemo) ...<Widget>[
             const SizedBox(height: 4),
             TextButton(
@@ -1003,9 +1206,29 @@ class _InTransitSheet extends ConsumerWidget {
     );
   }
 
-  Future<void> _onNavigate(WidgetRef ref, double lat, double lng) async {
+  /// Opens external navigation. When the rider has more than one stop
+  /// left, hands Google Maps the *whole* planned route (item: "if user
+  /// navigation press, that time also multi-order... routing system")
+  /// instead of just this one destination — same sequence the map
+  /// itself is already following ([ActiveDeliveryMapController.stops]).
+  /// Falls back to a single-destination link for the common one-order
+  /// trip, unchanged from before.
+  Future<void> _onNavigate(
+    WidgetRef ref,
+    List<DeliveryStopInfo> stops,
+    double lat,
+    double lng,
+  ) async {
     final ExternalNavigationLauncher launcher =
         ref.read<ExternalNavigationLauncher>(externalNavLauncherProvider);
+    if (stops.length > 1) {
+      final List<DeliveryStopInfo> sorted = List<DeliveryStopInfo>.of(stops)
+        ..sort((DeliveryStopInfo a, DeliveryStopInfo b) => a.rank.compareTo(b.rank));
+      await launcher.openMultiStopDirections(
+        sorted.map((DeliveryStopInfo s) => s.position).toList(growable: false),
+      );
+      return;
+    }
     await launcher.openDrivingDirections(destLat: lat, destLng: lng);
   }
 
@@ -1018,15 +1241,42 @@ class _InTransitSheet extends ConsumerWidget {
     }
   }
 
-  Future<void> _onDeliver(BuildContext context) async {
+  /// Opens the payment-collection sheet (UPI QR + cash/UPI amount entry)
+  /// and records the result on [ActiveDeliveryController] so the "Deliver"
+  /// button un-disables. Only reachable for COD orders — see the `isCod`
+  /// gate in [build].
+  Future<void> _onCollectPayment(BuildContext context, WidgetRef ref) async {
+    final CollectedPayment? payment =
+        await showCollectPaymentSheet(context, order);
+    if (payment == null) return;
+    ref
+        .read<ActiveDeliveryController>(activeDeliveryControllerProvider)
+        .recordCollectedPayment(order.orderId, payment);
+  }
+
+  Future<void> _onDeliver(
+    BuildContext context,
+    CollectedPayment? collected,
+    WidgetRef ref,
+  ) async {
     final ScaffoldMessengerState? messenger =
         ScaffoldMessenger.maybeOf(context);
-    final DeliveryOutcome outcome = await showDeliveryOtpSheet(context, order);
-    switch (outcome) {
-      case DeliveryOutcomeDelivered():
-      case DeliveryOutcomeCancelled():
+
+    final DeliveryResult result = await ref
+        .read<ActiveDeliveryController>(activeDeliveryControllerProvider)
+        .deliverDirect(
+          order.orderId,
+          cashCollected: collected?.cashCollected,
+          upiCollected: collected?.upiCollected,
+        );
+    switch (result) {
+      case DeliveryResultSuccess():
         return;
-      case DeliveryOutcomeFailed(message: final String message):
+      case DeliveryResultStale(message: final String message):
+      case DeliveryResultFailure(message: final String message):
+      case DeliveryResultInvalidOtp(message: final String message):
+      case DeliveryResultOtpExpired(message: final String message):
+      case DeliveryResultProofFailed(message: final String message):
         messenger?.showSnackBar(SnackBar(content: Text(message)));
     }
   }
@@ -1068,13 +1318,16 @@ class _InTransitSheet extends ConsumerWidget {
   }
 }
 
-class _DeliveredSheet extends StatelessWidget {
+class _DeliveredSheet extends ConsumerWidget {
   const _DeliveredSheet({required this.order});
 
   final DeliveryOrder order;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool commissionEnabled =
+        ref.watch(riderProfileProvider).asData?.value.commissionEnabled ??
+            true;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
@@ -1094,17 +1347,20 @@ class _DeliveredSheet extends StatelessWidget {
                   style:
                       AppTypography.heading.copyWith(color: AppColors.black),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'You earned',
-                  style: AppTypography.micro.copyWith(color: AppColors.muted),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '₹${order.riderEarning.toStringAsFixed(0)}',
-                  style:
-                      AppTypography.display.copyWith(color: AppColors.black),
-                ),
+                if (commissionEnabled) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    'You earned',
+                    style:
+                        AppTypography.micro.copyWith(color: AppColors.muted),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '₹${order.riderEarning.toStringAsFixed(0)}',
+                    style: AppTypography.display
+                        .copyWith(color: AppColors.black),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1126,11 +1382,16 @@ class _AddressCard extends StatelessWidget {
     required this.tag,
     required this.title,
     required this.subtitle,
+    this.paymentMethod,
   });
 
   final String tag;
   final String title;
   final String subtitle;
+
+  /// Raw `payment_method` wire value (`COD`, `ONLINE`, `WALLET`, ...).
+  /// When non-null, a small payment-status pill renders below the address.
+  final String? paymentMethod;
 
   @override
   Widget build(BuildContext context) {
@@ -1167,6 +1428,55 @@ class _AddressCard extends StatelessWidget {
             style: AppTypography.body.copyWith(color: AppColors.muted),
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
+          ),
+          if (paymentMethod != null && paymentMethod!.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            _PaymentMethodPill(paymentMethod: paymentMethod!),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Small pill showing the order's payment method — amber for Cash on
+/// Delivery (money still needs collecting), green for anything already
+/// paid (`ONLINE`, `WALLET`).
+class _PaymentMethodPill extends StatelessWidget {
+  const _PaymentMethodPill({required this.paymentMethod});
+
+  final String paymentMethod;
+
+  @override
+  Widget build(BuildContext context) {
+    final String upper = paymentMethod.toUpperCase();
+    final bool isCod = upper == 'COD';
+    final String label = switch (upper) {
+      'COD' => 'Cash on Delivery',
+      'ONLINE' => 'Paid online',
+      'WALLET' => 'Paid via wallet',
+      _ => paymentMethod,
+    };
+    final Color color = isCod ? AppColors.warning : AppColors.success;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(
+            isCod ? Icons.payments_outlined : Icons.check_circle_outline,
+            size: 14,
+            color: color,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: AppTypography.micro.copyWith(color: color),
           ),
         ],
       ),

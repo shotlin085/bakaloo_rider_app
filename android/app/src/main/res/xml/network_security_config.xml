@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Network security configuration for the Grolin Rider App.
+    Network security configuration for the Bakaloo Rider App.
 
     The app talks exclusively to the live HTTPS backend at https://grolin.shotlin.in
     over TLS. Cleartext traffic is disallowed for every domain in every flavor.

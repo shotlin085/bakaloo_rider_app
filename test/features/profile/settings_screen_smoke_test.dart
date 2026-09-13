@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/features/profile/presentation/settings_screen.dart';
+import 'package:bakaloo_rider_app/features/profile/presentation/settings_screen.dart';
 
 void main() {
   testWidgets('SettingsScreen renders the toggles, help row, and version footer',

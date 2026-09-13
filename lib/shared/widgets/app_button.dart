@@ -25,7 +25,7 @@ enum AppButtonVariant {
   success,
 }
 
-/// The single button widget for the Grolin Rider App.
+/// The single button widget for the Bakaloo Rider App.
 ///
 /// `AppButton` owns the rider app's visual button language so screens never
 /// reach for raw [ElevatedButton] / [OutlinedButton] variants. It enforces
@@ -162,7 +162,6 @@ class AppButton extends StatelessWidget {
                   )
                 : null,
           ),
-          alignment: Alignment.center,
           child: content,
         ),
       ),

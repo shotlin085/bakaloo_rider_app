@@ -1,5 +1,6 @@
 import 'package:url_launcher/url_launcher.dart' as ul;
 
+import '../maps/geo_point.dart';
 import 'app_logger.dart';
 
 /// Pluggable backend for [ExternalNavigationLauncher] so widget and
@@ -64,12 +65,35 @@ class ExternalNavigationLauncher {
   Future<bool> openDrivingDirections({
     required double destLat,
     required double destLng,
-  }) async {
+  }) {
     final Uri uri = buildGoogleMapsDirectionsUrl(
       destLat: destLat,
       destLng: destLng,
     );
+    return _launchWithFallback(uri);
+  }
 
+  /// Opens Google Maps **multi-stop** driving directions through every
+  /// stop in [orderedStops], in order — the same "premium" route the
+  /// map screen itself plans (item 8/9: nearest-neighbor sequencing),
+  /// handed off to Google Maps' own multi-stop optimizer so the rider
+  /// can use turn-by-turn navigation for the whole trip instead of
+  /// re-opening Maps for each delivery individually.
+  ///
+  /// [orderedStops] must have at least one entry; a single entry
+  /// degrades to the same URL shape [openDrivingDirections] would
+  /// build. No `origin` is set — Maps uses the device's live GPS
+  /// position, matching [openDrivingDirections]'s existing behaviour.
+  Future<bool> openMultiStopDirections(List<GeoPoint> orderedStops) {
+    assert(orderedStops.isNotEmpty, 'orderedStops must not be empty');
+    final Uri uri = buildGoogleMapsMultiStopDirectionsUrl(orderedStops);
+    return _launchWithFallback(uri);
+  }
+
+  /// Shared launch sequence for every nav method: try the installed
+  /// Maps app first, fall back to the platform default (typically a
+  /// browser) if that fails for any reason.
+  Future<bool> _launchWithFallback(Uri uri) async {
     try {
       if (await _delegate.canLaunch(uri)) {
         final bool ok = await _delegate.launch(
@@ -121,6 +145,41 @@ Uri buildGoogleMapsDirectionsUrl({
     '&destination=$dest'
     '&travelmode=driving',
   );
+}
+
+/// Builds a **multi-stop** Google Maps directions URL used by
+/// [ExternalNavigationLauncher.openMultiStopDirections]. Surfaced as a
+/// top-level function so tests can assert on the exact URL shape.
+///
+/// The last entry in [orderedStops] becomes `destination`; every stop
+/// before it becomes a pipe-separated `waypoints` entry — this is
+/// Google Maps' documented shape for a multi-destination trip
+/// (`https://developers.google.com/maps/documentation/urls/get-started#directions-action`),
+/// the same deep link Maps itself uses when a user adds several stops
+/// to one trip. Maps applies its own waypoint-order optimization on
+/// top of the order we hand it, so this doesn't need to be a perfect
+/// route — just a sane starting sequence, which [DeliveryOrder.sequenceRoute]
+/// already provides.
+Uri buildGoogleMapsMultiStopDirectionsUrl(List<GeoPoint> orderedStops) {
+  assert(orderedStops.isNotEmpty, 'orderedStops must not be empty');
+  final GeoPoint destination = orderedStops.last;
+  final List<GeoPoint> waypoints = orderedStops.sublist(0, orderedStops.length - 1);
+
+  final StringBuffer url = StringBuffer('https://www.google.com/maps/dir/?api=1')
+    ..write('&destination=${_fmt(destination.latitude)},${_fmt(destination.longitude)}')
+    ..write('&travelmode=driving');
+
+  if (waypoints.isNotEmpty) {
+    // Same unencoded `lat,lng` convention as `destination` above (Maps'
+    // deep link expects the comma literal); entries are pipe-separated,
+    // matching Google's documented multi-stop URL shape exactly.
+    final String joined = waypoints
+        .map((GeoPoint p) => '${_fmt(p.latitude)},${_fmt(p.longitude)}')
+        .join('|');
+    url.write('&waypoints=$joined');
+  }
+
+  return Uri.parse(url.toString());
 }
 
 /// Formats a coordinate with up to 7 decimal places (~ 1 cm) and

@@ -66,6 +66,9 @@ class _DeliveryHistoryScreenState
   Widget build(BuildContext context) {
     final HistoryController controller =
         ref.watch<HistoryController>(historyControllerProvider);
+    final bool commissionEnabled =
+        ref.watch(riderProfileProvider).asData?.value.commissionEnabled ??
+            true;
 
     return Scaffold(
       backgroundColor: AppColors.offWhite,
@@ -81,11 +84,11 @@ class _DeliveryHistoryScreenState
           style: AppTypography.heading.copyWith(color: AppColors.charcoal),
         ),
       ),
-      body: _buildBody(controller),
+      body: _buildBody(controller, commissionEnabled),
     );
   }
 
-  Widget _buildBody(HistoryController controller) {
+  Widget _buildBody(HistoryController controller, bool commissionEnabled) {
     if (controller.isLoading) {
       return const _HistorySkeleton();
     }
@@ -124,7 +127,10 @@ class _DeliveryHistoryScreenState
               child: LoadingIndicator(),
             );
           }
-          return _HistoryRow(entry: controller.orders[index]);
+          return _HistoryRow(
+            entry: controller.orders[index],
+            commissionEnabled: commissionEnabled,
+          );
         },
       ),
     );
@@ -133,9 +139,10 @@ class _DeliveryHistoryScreenState
 
 /// A single delivery history row card.
 class _HistoryRow extends StatelessWidget {
-  const _HistoryRow({required this.entry});
+  const _HistoryRow({required this.entry, required this.commissionEnabled});
 
   final DeliveryHistoryEntry entry;
+  final bool commissionEnabled;
 
   static final NumberFormat _money = NumberFormat.currency(
     locale: 'en_IN',
@@ -214,12 +221,14 @@ class _HistoryRow extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
-              Text(
-                _money.format(entry.earnings),
-                style:
-                    AppTypography.heading.copyWith(color: AppColors.charcoal),
-              ),
-              const SizedBox(height: 6),
+              if (commissionEnabled) ...<Widget>[
+                Text(
+                  _money.format(entry.earnings),
+                  style: AppTypography.heading
+                      .copyWith(color: AppColors.charcoal),
+                ),
+                const SizedBox(height: 6),
+              ],
               StatusChip(
                 label: entry.status,
                 tone: _toneFor(entry.status),

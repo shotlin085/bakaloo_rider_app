@@ -1,4 +1,4 @@
-/// Build flavor for the Grolin Rider App.
+/// Build flavor for the Bakaloo Rider App.
 ///
 /// Drives environment selection (`Env.current`), dev-only affordances
 /// (e.g., demo delivery completion, OTP echo on the OTP screen), and log

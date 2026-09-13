@@ -6,10 +6,10 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/network/api_client.dart';
-import 'package:grolin_rider_app/core/utils/image_compressor.dart';
-import 'package:grolin_rider_app/features/onboarding/data/documents_api.dart';
-import 'package:grolin_rider_app/features/onboarding/domain/rider_document.dart';
+import 'package:bakaloo_rider_app/core/network/api_client.dart';
+import 'package:bakaloo_rider_app/core/utils/image_compressor.dart';
+import 'package:bakaloo_rider_app/features/onboarding/data/documents_api.dart';
+import 'package:bakaloo_rider_app/features/onboarding/domain/rider_document.dart';
 
 /// Test-only [ImageCompressor] that returns the input file unchanged.
 ///

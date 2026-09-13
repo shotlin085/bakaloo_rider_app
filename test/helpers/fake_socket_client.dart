@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:grolin_rider_app/core/realtime/socket_client.dart';
+import 'package:bakaloo_rider_app/core/realtime/socket_client.dart';
 
 /// A captured emit recorded by [FakeSocketClient].
 class CapturedEmit {

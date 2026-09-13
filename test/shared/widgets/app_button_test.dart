@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/theme/app_colors.dart';
-import 'package:grolin_rider_app/shared/widgets/app_button.dart';
+import 'package:bakaloo_rider_app/core/theme/app_colors.dart';
+import 'package:bakaloo_rider_app/shared/widgets/app_button.dart';
 
 void main() {
   Future<void> pumpButton(

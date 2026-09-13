@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/network/auth_interceptor.dart';
+import 'package:bakaloo_rider_app/core/network/auth_interceptor.dart';
 
 /// Unit tests for [RefreshLock].
 ///

@@ -1,17 +1,18 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:grolin_rider_app/core/network/api_envelope.dart';
-import 'package:grolin_rider_app/features/delivery/data/delivery_api.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_history_entry.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_order.dart';
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
-import 'package:grolin_rider_app/features/delivery/domain/payout.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_earnings.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_profile.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_stats.dart';
-import 'package:grolin_rider_app/features/delivery/domain/store_info.dart';
+import 'package:bakaloo_rider_app/core/network/api_envelope.dart';
+import 'package:bakaloo_rider_app/features/delivery/data/delivery_api.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_history_entry.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_order.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/payout.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/pickup_batch.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_earnings.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_profile.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_stats.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/store_info.dart';
 
 /// Captured record of a [FakeDeliveryApi.markDelivered] call.
 @immutable
@@ -19,22 +20,26 @@ class CapturedMarkDelivered {
   /// Constructs a captured mark-delivered call.
   const CapturedMarkDelivered({
     required this.orderId,
-    this.otp,
     this.proofPhotoUrl,
     this.demoMode,
+    this.cashCollected,
+    this.upiCollected,
   });
 
   /// The order id passed to markDelivered.
   final String orderId;
-
-  /// OTP value if supplied.
-  final String? otp;
 
   /// Proof photo URL if supplied.
   final String? proofPhotoUrl;
 
   /// demoMode flag if supplied.
   final bool? demoMode;
+
+  /// Cash-collected amount if supplied.
+  final double? cashCollected;
+
+  /// UPI-collected amount if supplied.
+  final double? upiCollected;
 }
 
 /// Hand-rolled fake implementation of [DeliveryApi] for integration tests.
@@ -103,9 +108,10 @@ class FakeDeliveryApi implements DeliveryApi {
   // State
   // ---------------------------------------------------------------------------
 
-  /// Set to true after [_assignOrder] is called, so that [getOrders] can
-  /// return the seeded order.
-  DeliveryOrder? _assignedOrder;
+  /// Populated by [assignOrder] / [assignOrders] so [getOrders] can
+  /// return the seeded order(s) — simulating one or more backend
+  /// "assignment" events.
+  List<DeliveryOrder> _assignedOrders = const <DeliveryOrder>[];
 
   // ---------------------------------------------------------------------------
   // Call-count / argument captures
@@ -147,7 +153,14 @@ class FakeDeliveryApi implements DeliveryApi {
   /// Seeds the fake with [order] so that [getOrders] will return it on
   /// the next call (simulating a backend "assignment" event).
   void assignOrder(DeliveryOrder order) {
-    _assignedOrder = order;
+    _assignedOrders = <DeliveryOrder>[order];
+  }
+
+  /// Seeds the fake with multiple [orders] so [getOrders] returns all of
+  /// them — simulating a rider with more than one active assignment
+  /// (item 8/9 multi-stop tests).
+  void assignOrders(List<DeliveryOrder> orders) {
+    _assignedOrders = orders;
   }
 
   // ---------------------------------------------------------------------------
@@ -173,18 +186,23 @@ class FakeDeliveryApi implements DeliveryApi {
   @override
   Future<List<DeliveryOrder>> getOrders({String? status}) async {
     getOrdersCallCount++;
-    final DeliveryOrder? order = _assignedOrder;
-    if (order == null) {
-      return const <DeliveryOrder>[];
-    }
-    return <DeliveryOrder>[order];
+    return _assignedOrders;
   }
 
   @override
   Future<Map<String, dynamic>> acceptOrder(String orderId) async {
     acceptOrderCalls.add(orderId);
-    // Return the order updated with ACCEPTED status.
-    final DeliveryOrder? base = _assignedOrder;
+    // Return the matching seeded order updated with ACCEPTED status,
+    // falling back to the first seeded order for callers that don't
+    // care which specific order comes back.
+    DeliveryOrder? base;
+    for (final DeliveryOrder order in _assignedOrders) {
+      if (order.orderId == orderId) {
+        base = order;
+        break;
+      }
+    }
+    base ??= _assignedOrders.isNotEmpty ? _assignedOrders.first : null;
     if (base == null) {
       return <String, dynamic>{
         'orderId': orderId,
@@ -202,11 +220,22 @@ class FakeDeliveryApi implements DeliveryApi {
   }
 
   @override
+  Future<PickupVerification> verifyScan(Map<String, dynamic> payload) {
+    throw UnsupportedError('FakeDeliveryApi.verifyScan not implemented');
+  }
+
+  @override
+  Future<PickupVerification> getPendingChecklist(String orderId) {
+    throw UnsupportedError('FakeDeliveryApi.getPendingChecklist not implemented');
+  }
+
+  @override
   Future<void> markDelivered(
     String orderId, {
-    String? otp,
     String? proofPhotoUrl,
     bool? demoMode,
+    double? cashCollected,
+    double? upiCollected,
   }) async {
     assert(
       demoMode == true,
@@ -216,9 +245,10 @@ class FakeDeliveryApi implements DeliveryApi {
     markDeliveredCalls.add(
       CapturedMarkDelivered(
         orderId: orderId,
-        otp: otp,
         proofPhotoUrl: proofPhotoUrl,
         demoMode: demoMode,
+        cashCollected: cashCollected,
+        upiCollected: upiCollected,
       ),
     );
   }
@@ -257,11 +287,6 @@ class FakeDeliveryApi implements DeliveryApi {
   @override
   Future<void> cancelDelivery(String orderId, String reason) {
     throw UnsupportedError('FakeDeliveryApi.cancelDelivery not implemented');
-  }
-
-  @override
-  Future<Map<String, dynamic>> resendOtp(String orderId) {
-    throw UnsupportedError('FakeDeliveryApi.resendOtp not implemented');
   }
 
   @override

@@ -151,11 +151,17 @@ class OffersController extends ChangeNotifier {
     if (index == -1) return;
 
     final DeliveryOrder offer = _offers[index];
-    final AssignmentStatus resolved = AssignmentStateMachine.apply(
-      offer.assignmentStatus,
-      status,
-      orderId: orderId,
-    );
+    // A terminal status is always applied even if it skips stages this
+    // offer's local state never observed (e.g. an admin cancelling an
+    // order before the rider ever accepted it) — see the matching note
+    // on ActiveDeliveryController.applyExternalStatus.
+    final AssignmentStatus resolved = AssignmentStateMachine.isTerminal(status)
+        ? status
+        : AssignmentStateMachine.apply(
+            offer.assignmentStatus,
+            status,
+            orderId: orderId,
+          );
 
     if (AssignmentStateMachine.isTerminal(resolved)) {
       _offers.removeAt(index);

@@ -1,6 +1,6 @@
 import 'package:flutter/animation.dart';
 
-/// Motion tokens for the Grolin Rider App.
+/// Motion tokens for the Bakaloo Rider App.
 ///
 /// Durations and curves match the values called out in `design.md`. The
 /// 180-300 ms band keeps the app feeling brisk on real devices while

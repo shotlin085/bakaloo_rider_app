@@ -19,7 +19,7 @@
 
 import 'package:glados/glados.dart';
 
-import 'package:grolin_rider_app/core/maps/tile_coordinate.dart';
+import 'package:bakaloo_rider_app/core/maps/tile_coordinate.dart';
 
 void main() {
   // ---------------------------------------------------------------------------

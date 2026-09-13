@@ -14,6 +14,7 @@ import '../features/delivery/application/active_delivery_controller.dart';
 import '../features/delivery/application/active_delivery_map_controller.dart';
 import '../features/delivery/application/delivery_socket_controller.dart';
 import '../features/delivery/application/offers_controller.dart';
+import '../features/delivery/application/pickup_session_controller.dart';
 import '../features/delivery/data/delivery_api.dart';
 import '../features/delivery/data/delivery_repository.dart';
 import '../features/delivery/domain/rider_profile.dart';
@@ -39,6 +40,7 @@ import 'maps/cached_tile_provider.dart';
 import 'maps/marker_assets.dart';
 import 'network/api_client.dart';
 import 'network/auth_interceptor.dart';
+import 'permissions/camera_permission_service.dart';
 import 'realtime/socket_client.dart';
 import 'storage/secure_token_store.dart';
 import 'utils/app_logger.dart';
@@ -300,6 +302,13 @@ final Provider<LocationPermissionService> locationPermissionServiceProvider =
   return LocationPermissionService();
 });
 
+/// Singleton [CameraPermissionService] for checking and requesting camera
+/// permission before opening the QR pickup scanner.
+final Provider<CameraPermissionService> cameraPermissionServiceProvider =
+    Provider<CameraPermissionService>((Ref ref) {
+  return CameraPermissionService();
+});
+
 /// Singleton [LocationService] that wraps Geolocator with profile-driven
 /// stream settings (R17.1–R17.3).
 ///
@@ -329,7 +338,17 @@ final ChangeNotifierProvider<ActiveDeliveryController>
   return ActiveDeliveryController(
     repository: ref.watch<DeliveryRepository>(deliveryRepositoryProvider),
     socket: ref.watch<SocketClient>(socketClientProvider),
+    riderLocation: ref.watch(riderLocationNotifierProvider),
   );
+});
+
+/// Session-local QR-pickup scan progress ("X of Y collected") for the
+/// rider's current store visit — layered on top of
+/// [activeDeliveryControllerProvider]'s batch, not a replacement for it.
+final ChangeNotifierProvider<PickupSessionController>
+    pickupSessionControllerProvider =
+    ChangeNotifierProvider<PickupSessionController>((Ref ref) {
+  return PickupSessionController();
 });
 
 // ---------------------------------------------------------------------------
@@ -429,6 +448,8 @@ final Provider<DeliverySocketController> deliverySocketControllerProvider =
     offers: ref.watch(offersControllerProvider),
     activeDelivery: ref.watch(activeDeliveryControllerProvider),
     repository: ref.watch(deliveryRepositoryProvider),
+    pickupSession: ref.watch(pickupSessionControllerProvider),
+    riderLocation: ref.watch(riderLocationNotifierProvider),
   );
   ref.onDispose(controller.dispose);
   return controller;

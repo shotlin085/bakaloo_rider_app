@@ -1,7 +1,7 @@
 /// Centralised lenient field-read helpers for the delivery domain
 /// `fromJson` factories.
 ///
-/// The live Grolin backend mixes shapes across routes:
+/// The live Bakaloo backend mixes shapes across routes:
 ///
 /// - **Auth** routes use camelCase (`accessToken`, `isVerified`).
 /// - **Profile** uses snake_case with **string-typed** numerics

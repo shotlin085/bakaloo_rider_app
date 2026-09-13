@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_typography.dart';
 
-/// Single text input widget for the Grolin Rider App.
+/// Single text input widget for the Bakaloo Rider App.
 ///
 /// Wraps a Material [TextField] with the rider app's visual contract:
 /// label above the input in [AppTypography.label], optional error below

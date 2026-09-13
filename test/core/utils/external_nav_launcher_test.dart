@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/core/utils/external_nav_launcher.dart';
+import 'package:bakaloo_rider_app/core/maps/geo_point.dart';
+import 'package:bakaloo_rider_app/core/utils/external_nav_launcher.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../helpers/recording_url_launcher.dart';
@@ -120,6 +121,93 @@ void main() {
         destLng: 77.0,
       );
       expect(uri.toString(), contains('destination=12.5,77'));
+    });
+  });
+
+  group('ExternalNavigationLauncher.openMultiStopDirections', () {
+    test(
+      'launches a Google Maps URL with waypoints for every stop before '
+      'the last, and the last stop as the destination',
+      () async {
+        final RecordingUrlLauncher launcher = RecordingUrlLauncher();
+        final ExternalNavigationLauncher nav =
+            ExternalNavigationLauncher(delegate: launcher);
+
+        final bool ok = await nav.openMultiStopDirections(const <GeoPoint>[
+          GeoPoint(22.51, 88.31),
+          GeoPoint(22.52, 88.32),
+          GeoPoint(22.53, 88.33),
+        ]);
+
+        expect(ok, isTrue);
+        expect(launcher.launchCalls, hasLength(1));
+        final CapturedLaunch call = launcher.launchCalls.single;
+        expect(call.mode, LaunchMode.externalApplication);
+        // Dart's Uri percent-encodes the `|` separator on serialization
+        // (%7C) — a valid, equivalent form; queryParameters below confirms
+        // it decodes back to the original unencoded shape.
+        expect(
+          call.uri.toString(),
+          'https://www.google.com/maps/dir/?api=1'
+          '&destination=22.53,88.33'
+          '&travelmode=driving'
+          '&waypoints=22.51,88.31%7C22.52,88.32',
+        );
+        expect(call.uri.queryParameters['waypoints'], '22.51,88.31|22.52,88.32');
+      },
+    );
+
+    test('a single stop degrades to the same shape as openDrivingDirections', () async {
+      final RecordingUrlLauncher launcher = RecordingUrlLauncher();
+      final ExternalNavigationLauncher nav =
+          ExternalNavigationLauncher(delegate: launcher);
+
+      await nav.openMultiStopDirections(const <GeoPoint>[GeoPoint(12.97, 77.59)]);
+
+      expect(
+        launcher.launchCalls.single.uri.toString(),
+        'https://www.google.com/maps/dir/?api=1'
+        '&destination=12.97,77.59'
+        '&travelmode=driving',
+      );
+    });
+
+    test('falls back to platformDefault when the external app launch throws', () async {
+      final RecordingUrlLauncher launcher = RecordingUrlLauncher(throwOnExternal: true);
+      final ExternalNavigationLauncher nav =
+          ExternalNavigationLauncher(delegate: launcher);
+
+      final bool ok = await nav.openMultiStopDirections(const <GeoPoint>[
+        GeoPoint(1, 2),
+        GeoPoint(3, 4),
+      ]);
+
+      expect(ok, isTrue);
+      expect(launcher.launchCalls.single.mode, LaunchMode.platformDefault);
+    });
+  });
+
+  group('buildGoogleMapsMultiStopDirectionsUrl', () {
+    test('emits waypoints (pipe-separated) then the final destination', () {
+      final Uri uri = buildGoogleMapsMultiStopDirectionsUrl(const <GeoPoint>[
+        GeoPoint(22.51, 88.31),
+        GeoPoint(22.52, 88.32),
+        GeoPoint(22.53, 88.33),
+      ]);
+
+      expect(uri.scheme, 'https');
+      expect(uri.host, 'www.google.com');
+      expect(uri.queryParameters['destination'], '22.53,88.33');
+      expect(uri.queryParameters['waypoints'], '22.51,88.31|22.52,88.32');
+      expect(uri.queryParameters['travelmode'], 'driving');
+    });
+
+    test('omits the waypoints param entirely for a single stop', () {
+      final Uri uri =
+          buildGoogleMapsMultiStopDirectionsUrl(const <GeoPoint>[GeoPoint(12.97, 77.59)]);
+
+      expect(uri.queryParameters.containsKey('waypoints'), isFalse);
+      expect(uri.queryParameters['destination'], '12.97,77.59');
     });
   });
 }

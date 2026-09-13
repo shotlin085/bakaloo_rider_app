@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/features/delivery/presentation/camera_director.dart';
+import 'package:bakaloo_rider_app/features/delivery/presentation/camera_director.dart';
 
 /// Unit tests for [CameraDirector]'s suppression-window behaviour
 /// (R12.6) and phase-fit tracking (R12.7).

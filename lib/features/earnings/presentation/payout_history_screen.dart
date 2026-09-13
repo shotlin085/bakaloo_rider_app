@@ -147,6 +147,9 @@ class _PayoutHistoryScreenState extends ConsumerState<PayoutHistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool commissionEnabled =
+        ref.watch(riderProfileProvider).asData?.value.commissionEnabled ??
+            true;
     return Scaffold(
       backgroundColor: AppColors.offWhite,
       appBar: AppBar(
@@ -161,7 +164,26 @@ class _PayoutHistoryScreenState extends ConsumerState<PayoutHistoryScreen> {
           style: AppTypography.heading.copyWith(color: AppColors.charcoal),
         ),
       ),
-      body: _buildBody(),
+      body: Column(
+        children: <Widget>[
+          // Item 10: past payouts are real, already-paid money and stay
+          // visible regardless of the flag — only new commission
+          // accrual is disabled. This banner just explains why the
+          // list may have stopped growing.
+          if (!commissionEnabled)
+            Container(
+              width: double.infinity,
+              color: AppColors.offWhite,
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+              child: Text(
+                'Commission is currently paused — you\'re on a fixed '
+                'salary. Past payouts remain below.',
+                style: AppTypography.micro.copyWith(color: AppColors.muted),
+              ),
+            ),
+          Expanded(child: _buildBody()),
+        ],
+      ),
     );
   }
 

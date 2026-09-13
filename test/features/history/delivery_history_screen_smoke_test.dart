@@ -3,11 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/providers.dart';
-import 'package:grolin_rider_app/features/delivery/data/delivery_api.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_history_entry.dart';
-import 'package:grolin_rider_app/features/history/application/history_controller.dart';
-import 'package:grolin_rider_app/features/history/presentation/delivery_history_screen.dart';
+import 'package:bakaloo_rider_app/core/providers.dart';
+import 'package:bakaloo_rider_app/features/delivery/data/delivery_api.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_history_entry.dart';
+import 'package:bakaloo_rider_app/features/history/application/history_controller.dart';
+import 'package:bakaloo_rider_app/features/history/presentation/delivery_history_screen.dart';
 
 /// Stub controller that returns a fixed list without touching the
 /// network.

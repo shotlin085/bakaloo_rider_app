@@ -14,9 +14,9 @@
 
 import 'package:glados/glados.dart';
 
-import 'package:grolin_rider_app/core/utils/coordinate.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/store_info.dart';
+import 'package:bakaloo_rider_app/core/utils/coordinate.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/store_info.dart';
 
 void main() {
   /// True when both dimensions fall inside the WGS-84 valid range.

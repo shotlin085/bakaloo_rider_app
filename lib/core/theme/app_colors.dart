@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Premium minimal color palette for the Grolin Rider App.
+/// Premium minimal color palette for the Bakaloo Rider App.
 ///
 /// Tokens come from the design system foundation in `design.md` and are
 /// reused everywhere instead of hard-coded `Color(0x...)` literals so that

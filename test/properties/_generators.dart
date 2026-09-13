@@ -23,15 +23,15 @@
 
 import 'package:glados/glados.dart';
 
-import 'package:grolin_rider_app/features/delivery/domain/assignment_status.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_address.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_history_entry.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_item.dart';
-import 'package:grolin_rider_app/features/delivery/domain/delivery_order.dart';
-import 'package:grolin_rider_app/features/delivery/domain/payout.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_earnings.dart';
-import 'package:grolin_rider_app/features/delivery/domain/rider_stats.dart';
-import 'package:grolin_rider_app/features/delivery/domain/store_info.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/assignment_status.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_address.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_history_entry.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_item.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/delivery_order.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/payout.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_earnings.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/rider_stats.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/store_info.dart';
 
 // ---------------------------------------------------------------------------
 // Equality helpers

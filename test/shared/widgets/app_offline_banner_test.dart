@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/providers.dart';
-import 'package:grolin_rider_app/shared/widgets/app_offline_banner.dart';
+import 'package:bakaloo_rider_app/core/providers.dart';
+import 'package:bakaloo_rider_app/shared/widgets/app_offline_banner.dart';
 
 /// Minimal stub widget shown as the child of [AppOfflineBanner].
 const Widget _child = Placeholder();

@@ -110,6 +110,9 @@ class _DeliveryOfferSheetBodyState
         ref.watch<OffersController>(offersControllerProvider);
     final bool busy = controller.isBusy(widget.order.orderId);
     final ScrollController? primary = PrimaryScrollController.maybeOf(context);
+    final bool commissionEnabled =
+        ref.watch(riderProfileProvider).asData?.value.commissionEnabled ??
+            true;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -131,18 +134,26 @@ class _DeliveryOfferSheetBodyState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                Text(
-                  '₹${widget.order.riderEarning.toStringAsFixed(0)}',
-                  style: AppTypography.display.copyWith(
-                    color: AppColors.black,
+                if (commissionEnabled) ...<Widget>[
+                  Text(
+                    '₹${widget.order.riderEarning.toStringAsFixed(0)}',
+                    style: AppTypography.display.copyWith(
+                      color: AppColors.black,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Your earning',
-                  style:
-                      AppTypography.micro.copyWith(color: AppColors.muted),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Your earning',
+                    style:
+                        AppTypography.micro.copyWith(color: AppColors.muted),
+                  ),
+                ] else
+                  Text(
+                    'New delivery',
+                    style: AppTypography.display.copyWith(
+                      color: AppColors.black,
+                    ),
+                  ),
                 const SizedBox(height: 16),
 
                 // Distance + ETA chips

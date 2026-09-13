@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/features/onboarding/domain/rider_document.dart';
+import 'package:bakaloo_rider_app/features/onboarding/domain/rider_document.dart';
 
 void main() {
   group('RiderDocumentType.wire', () {

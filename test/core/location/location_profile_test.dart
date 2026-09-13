@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/config/app_constants.dart';
-import 'package:grolin_rider_app/core/location/location_profile.dart';
+import 'package:bakaloo_rider_app/core/config/app_constants.dart';
+import 'package:bakaloo_rider_app/core/location/location_profile.dart';
 
 void main() {
   group('LocationProfileConfig.forProfile', () {

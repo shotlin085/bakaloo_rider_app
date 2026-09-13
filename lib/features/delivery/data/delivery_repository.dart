@@ -6,6 +6,7 @@ import '../../../core/utils/app_logger.dart';
 import '../domain/delivery_history_entry.dart';
 import '../domain/delivery_order.dart';
 import '../domain/payout.dart';
+import '../domain/pickup_batch.dart';
 import '../domain/rider_earnings.dart';
 import '../domain/rider_profile.dart';
 import '../domain/rider_stats.dart';
@@ -109,12 +110,49 @@ class DeliveryRepository {
     }
   }
 
-  /// Regenerates the delivery OTP and re-notifies the customer.
-  Future<void> resendOtp(String orderId) async {
+  /// Verifies a scanned invoice QR pickup code.
+  ///
+  /// [payload] carries `{token, v, sig}` only — the QR has no order id
+  /// to log until the backend resolves it from the token, which is why
+  /// this doesn't go through [_logAndTranslate] (built around an
+  /// already-known orderId) like the other action methods here.
+  /// Rejections (wrong rider, expired/revoked token, tampered
+  /// signature, already-scanned, etc.) surface as [ApiException] with
+  /// `e.message` already rider-readable — the caller shows it directly.
+  Future<PickupVerification> verifyScan(Map<String, dynamic> payload) async {
     try {
-      await _api.resendOtp(orderId);
+      return await _api.verifyScan(payload);
     } on ApiException catch (e, stack) {
-      _logAndTranslate('resendOtp', orderId, e, stack);
+      AppLogger.warn(
+        LogTopic.state,
+        'DeliveryRepository.verifyScan failed: '
+        '${e.backendCode ?? 'no-code'} ${e.message}',
+        error: e,
+        stackTrace: stack,
+      );
+      rethrow;
+    }
+  }
+
+  /// Re-fetches the checklist for an order already scanned (VERIFIED)
+  /// but not yet confirmed picked up — see [DeliveryApi.getPendingChecklist].
+  /// A `NO_PENDING_CHECKLIST` [ApiException] is an expected, silent
+  /// outcome for most orders (means "never scanned, that's fine") rather
+  /// than a failure worth logging as a warning — callers check for it
+  /// explicitly rather than treating every throw here as unexpected.
+  Future<PickupVerification> getPendingChecklist(String orderId) async {
+    try {
+      return await _api.getPendingChecklist(orderId);
+    } on ApiException catch (e, stack) {
+      if (e.backendCode != 'NO_PENDING_CHECKLIST') {
+        AppLogger.warn(
+          LogTopic.state,
+          'DeliveryRepository.getPendingChecklist($orderId) failed: '
+          '${e.backendCode ?? 'no-code'} ${e.message}',
+          error: e,
+          stackTrace: stack,
+        );
+      }
       rethrow;
     }
   }
@@ -132,16 +170,18 @@ class DeliveryRepository {
   /// Marks an order as delivered.
   Future<void> markDelivered(
     String orderId, {
-    String? otp,
     String? proofPhotoUrl,
     bool? demoMode,
+    double? cashCollected,
+    double? upiCollected,
   }) async {
     try {
       await _api.markDelivered(
         orderId,
-        otp: otp,
         proofPhotoUrl: proofPhotoUrl,
         demoMode: demoMode,
+        cashCollected: cashCollected,
+        upiCollected: upiCollected,
       );
     } on ApiException catch (e, stack) {
       _logAndTranslate('markDelivered', orderId, e, stack);

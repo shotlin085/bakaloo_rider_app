@@ -205,6 +205,25 @@ class _ProfileContent extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           _NavRow(
+            icon: Icons.history,
+            label: 'Delivery history',
+            subtitle: 'All your past orders',
+            onTap: () => context.push(AppRoutes.history),
+          ),
+          const SizedBox(height: 8),
+          // Payout history is per-order earnings — meaningless for a
+          // salaried rider (no commission), so only surfaced when there's
+          // actually commission to show a history of.
+          if (profile.commissionEnabled) ...<Widget>[
+            _NavRow(
+              icon: Icons.payments_outlined,
+              label: 'Payout history',
+              subtitle: 'Your commission payouts',
+              onTap: () => context.push(AppRoutes.payoutHistory),
+            ),
+            const SizedBox(height: 8),
+          ],
+          _NavRow(
             icon: Icons.settings_outlined,
             label: 'Settings',
             onTap: () => context.push(AppRoutes.settings),

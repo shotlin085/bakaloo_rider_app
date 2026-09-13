@@ -119,14 +119,27 @@ class AppSheetScaffold extends StatelessWidget {
               ],
             ),
           ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(
-            padding.left,
-            (title != null || trailing != null) ? 0 : padding.top,
-            padding.right,
-            padding.bottom,
+        // Flexible, not a bare Padding: this Column's own incoming height
+        // constraint is bounded (FractionallySizedBox above gives it a
+        // tight size matching the sheet's current extent), but a Column
+        // only ever passes that bound down to a FLEX child — a plain
+        // non-flex child (which `child` would be without this wrapper)
+        // always gets an unbounded max height instead, regardless of what
+        // this Column itself received. That silently defeats any
+        // Flexible/Expanded a caller puts inside `child` to keep, say, an
+        // action button on-screen against a variable-length scrollable —
+        // the constraint never reaches far enough to bound anything.
+        // Wrapping here is what actually lets that work.
+        Flexible(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              padding.left,
+              (title != null || trailing != null) ? 0 : padding.top,
+              padding.right,
+              padding.bottom,
+            ),
+            child: child,
           ),
-          child: child,
         ),
       ],
     );

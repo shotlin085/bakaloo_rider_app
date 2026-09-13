@@ -3,11 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/network/api_envelope.dart';
-import 'package:grolin_rider_app/core/providers.dart';
-import 'package:grolin_rider_app/features/delivery/data/delivery_api.dart';
-import 'package:grolin_rider_app/features/delivery/domain/payout.dart';
-import 'package:grolin_rider_app/features/earnings/presentation/payout_history_screen.dart';
+import 'package:bakaloo_rider_app/core/network/api_envelope.dart';
+import 'package:bakaloo_rider_app/core/providers.dart';
+import 'package:bakaloo_rider_app/features/delivery/data/delivery_api.dart';
+import 'package:bakaloo_rider_app/features/delivery/domain/payout.dart';
+import 'package:bakaloo_rider_app/features/earnings/presentation/payout_history_screen.dart';
 
 /// Stub [DeliveryApi] that returns a single page of payouts. Other
 /// methods throw if called, which keeps the test honest about what the

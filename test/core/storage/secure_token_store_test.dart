@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:grolin_rider_app/core/storage/secure_token_store.dart';
+import 'package:bakaloo_rider_app/core/storage/secure_token_store.dart';
 
 /// Unit tests for [SecureTokenStore], exercising the in-memory test
 /// double. The platform-backed implementation is identical aside from

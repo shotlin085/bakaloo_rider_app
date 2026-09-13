@@ -1,6 +1,6 @@
 import 'package:glados/glados.dart';
 
-import 'package:grolin_rider_app/core/location/sliding_window_throttler.dart';
+import 'package:bakaloo_rider_app/core/location/sliding_window_throttler.dart';
 
 /// Feature: grolin-rider-app, Property 3:
 /// For any sliding 60-second window, count(uploads) <= Rate_Budget(state).

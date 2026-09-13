@@ -8,7 +8,12 @@ import '../features/auth/presentation/otp_screen.dart';
 import '../features/auth/presentation/phone_login_screen.dart';
 import '../features/auth/presentation/splash_screen.dart';
 import '../features/delivery/application/active_delivery_controller.dart';
+import '../features/delivery/application/pickup_session_controller.dart';
+import '../features/delivery/domain/delivery_order.dart';
+import '../features/delivery/domain/pickup_batch.dart';
 import '../features/delivery/presentation/active_delivery_map_screen.dart';
+import '../features/delivery/presentation/pickup_batch_screen.dart';
+import '../features/delivery/presentation/qr_scan_screen.dart';
 import '../features/earnings/presentation/earnings_screen.dart';
 import '../features/earnings/presentation/payout_history_screen.dart';
 import '../features/history/presentation/delivery_history_screen.dart';
@@ -39,6 +44,12 @@ abstract final class AppRoutes {
   /// Active delivery (map + action sheets).
   static const String active = '/active';
 
+  /// Pickup-at-store batch overview (scan progress, "Start Deliveries").
+  static const String pickupBatch = '/pickup-batch';
+
+  /// Full-screen QR scanner for invoice pickup codes.
+  static const String qrScan = '/qr-scan';
+
   /// Earnings screen.
   static const String earnings = '/earnings';
 
@@ -65,9 +76,12 @@ GoRouter buildAppRouter(WidgetRef ref) {
       ref.read<SessionController>(sessionControllerProvider);
   final ActiveDeliveryController active =
       ref.read<ActiveDeliveryController>(activeDeliveryControllerProvider);
-  // Listenable that fires whenever either the session or the active
-  // delivery changes so the redirect rule re-evaluates.
-  final Listenable refresh = Listenable.merge(<Listenable>[session, active]);
+  final PickupSessionController pickupSession =
+      ref.read<PickupSessionController>(pickupSessionControllerProvider);
+  // Listenable that fires whenever the session, the active-order batch,
+  // or the pickup-scan session changes so the redirect rule re-evaluates.
+  final Listenable refresh =
+      Listenable.merge(<Listenable>[session, active, pickupSession]);
   return GoRouter(
     initialLocation: AppRoutes.splash,
     refreshListenable: refresh,
@@ -91,15 +105,27 @@ GoRouter buildAppRouter(WidgetRef ref) {
         return location == AppRoutes.approval ? null : AppRoutes.approval;
       }
       if (s.isApproved) {
-        // Active-delivery rule (R26.2): when the rider has an
-        // active delivery (ACCEPTED / IN_TRANSIT), keep them on the
-        // active-delivery screen. From any non-/active screen we
-        // bounce to /active so a hot restart, push notification, or
-        // tab switch never lands on /home with a live delivery
-        // running in the background.
-        final bool hasActive = active.current != null;
-        if (hasActive && location != AppRoutes.active) {
-          return AppRoutes.active;
+        // Active-batch rule (R26.2, extended for multi-order pickup):
+        // whenever the rider has ANY order in their active batch, keep
+        // them inside the delivery flow rather than /home — a hot
+        // restart, push notification, or tab switch should never leave
+        // a live batch running in the background unattended. Which
+        // screen depends on how far the batch has gotten:
+        //   - any order still not picked up  -> /pickup-batch (scan/confirm)
+        //   - every order already picked up  -> /active (deliver)
+        // /qr-scan is pushed on top of /pickup-batch and is deliberately
+        // exempt — a scan-session state change (e.g. marking an order
+        // verified) must not yank the rider off the scanner mid-scan.
+        if (active.batch.isNotEmpty) {
+          final bool needsPickupPhase = active.batch.any(
+            (DeliveryOrder o) =>
+                pickupSession.statusFor(o.orderId) != PickupScanStatus.pickedUp,
+          );
+          final String target =
+              needsPickupPhase ? AppRoutes.pickupBatch : AppRoutes.active;
+          if (location != target && location != AppRoutes.qrScan) {
+            return target;
+          }
         }
         if (onAuthScreen ||
             location == AppRoutes.splash ||
@@ -140,6 +166,16 @@ GoRouter buildAppRouter(WidgetRef ref) {
         path: AppRoutes.active,
         builder: (BuildContext context, GoRouterState state) =>
             const ActiveDeliveryMapScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.pickupBatch,
+        builder: (BuildContext context, GoRouterState state) =>
+            const PickupBatchScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.qrScan,
+        builder: (BuildContext context, GoRouterState state) =>
+            const QrScanScreen(),
       ),
       GoRoute(
         path: AppRoutes.earnings,

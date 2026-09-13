@@ -40,6 +40,47 @@ class MarkerEntry {
   int get hashCode => Object.hash(id, position);
 }
 
+/// One entry in [ActiveDeliveryMapController.stops] — every in-transit
+/// batch order the rider still has to deliver, ranked by live distance
+/// (item 8/9: "map inside both order show, calculate which closest and
+/// which longest"). The currently-focused order (the one the polyline
+/// and step panel target) is included too, always at whatever rank its
+/// real distance earns it.
+@immutable
+class DeliveryStopInfo {
+  const DeliveryStopInfo({
+    required this.order,
+    required this.position,
+    required this.rank,
+    required this.isFocused,
+    this.distanceMeters,
+  });
+
+  final DeliveryOrder order;
+  final GeoPoint position;
+
+  /// 1-based position in the distance-sorted list (1 = closest).
+  final int rank;
+
+  final bool isFocused;
+
+  /// `null` when the rider's live GPS position isn't known yet.
+  final double? distanceMeters;
+}
+
+/// One leg of the rider's planned route: [from] → [to]. [points] is the
+/// road-snapped polyline once [RouteService] resolves it, or the
+/// straight-line placeholder `[from, to]` until then — mirrors
+/// [RouteService.getRoute]'s own graceful-degradation contract so the
+/// map always has *something* to draw immediately.
+class _RouteLeg {
+  _RouteLeg({required this.from, required this.to, required this.points});
+
+  final GeoPoint from;
+  final GeoPoint to;
+  final List<GeoPoint> points;
+}
+
 /// Owns marker / polyline / phase state for the active delivery
 /// map screen, including the road-snapped navigation polyline
 /// (rider → destination via OSRM).
@@ -63,6 +104,20 @@ class ActiveDeliveryMapController extends ChangeNotifier {
 
   List<fm.Polyline> get polylines => _polylines;
   List<fm.Polyline> _polylines = const <fm.Polyline>[];
+
+  /// Every in-transit batch order (including the focused one), ranked by
+  /// live distance from the rider — closest first. Empty unless
+  /// [applyOrder] was called with more than one in-transit order in
+  /// `batch`. The presentation layer renders this as a "stops" strip and
+  /// numbered map pins so the rider can see and compare every remaining
+  /// delivery at once, not just the one currently being navigated to.
+  List<DeliveryStopInfo> get stops => _stops;
+  List<DeliveryStopInfo> _stops = const <DeliveryStopInfo>[];
+
+  /// The full batch passed into the last [applyOrder] call, kept so
+  /// [updateRiderPosition] can re-rank [stops] as the rider moves
+  /// without the caller needing to resupply it on every GPS tick.
+  List<DeliveryOrder> _lastBatch = const <DeliveryOrder>[];
 
   LocationPhase get phase => _phase;
   LocationPhase _phase = LocationPhase.none;
@@ -95,14 +150,24 @@ class ActiveDeliveryMapController extends ChangeNotifier {
 
   String? _currentOrderId;
 
-  /// Cached road-following polyline points so we don't lose the
-  /// route between rider GPS pings.
-  List<GeoPoint> _routePoints = const <GeoPoint>[];
+  /// The rider's full planned route as a sequence of legs — rider →
+  /// stop 1 → stop 2 → … Single-order trips simply have one leg, so
+  /// this subsumes what used to be a dedicated single-destination
+  /// cache. Road-snapped as [_maybeRefreshLegs] resolves each leg;
+  /// straight-line placeholders otherwise.
+  List<_RouteLeg> _legs = const <_RouteLeg>[];
 
-  /// Origin/destination this route was fetched for; lets us avoid
-  /// redundant network calls when nothing meaningful has changed.
-  GeoPoint? _routeFrom;
-  GeoPoint? _routeTo;
+  /// Rider position / destination set the last leg fetch was issued
+  /// for — lets [_maybeRefreshLegs] skip redundant network calls when
+  /// nothing meaningful has changed.
+  GeoPoint? _legsFetchOrigin;
+  List<GeoPoint> _legsFetchDestinations = const <GeoPoint>[];
+
+  /// Bumped on every [_maybeRefreshLegs] call so a slow, superseded
+  /// fetch can detect it's stale and discard its result instead of
+  /// clobbering a newer one (the plan or rider position can change
+  /// again while a fetch is still in flight).
+  int _legsFetchToken = 0;
 
   static const double _riderMoveThresholdMeters = 5;
   static const double _routeRefetchThresholdMeters = 50;
@@ -118,9 +183,14 @@ class ActiveDeliveryMapController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void applyOrder(DeliveryOrder order, StoreInfo? store) {
+  void applyOrder(
+    DeliveryOrder order,
+    StoreInfo? store, {
+    List<DeliveryOrder> batch = const <DeliveryOrder>[],
+  }) {
     final bool orderChanged = _currentOrderId != order.orderId;
     _currentOrderId = order.orderId;
+    _lastBatch = batch;
 
     GeoPoint? resolvedStore;
     final DeliveryAddress storeAddr = order.storeAddress;
@@ -141,22 +211,18 @@ class ActiveDeliveryMapController extends ChangeNotifier {
     }
 
     final LocationPhase nextPhase;
-    GeoPoint? destination;
     switch (order.assignmentStatus) {
       case AssignmentStatus.assigned:
       case AssignmentStatus.accepted:
         nextPhase =
             resolvedStore == null ? LocationPhase.none : LocationPhase.toStore;
-        destination = resolvedStore;
       case AssignmentStatus.inTransit:
         nextPhase = resolvedCustomer == null
             ? LocationPhase.none
             : LocationPhase.toCustomer;
-        destination = resolvedCustomer;
       case AssignmentStatus.delivered:
       case AssignmentStatus.cancelled:
         nextPhase = LocationPhase.none;
-        destination = null;
     }
 
     _storePosition = resolvedStore;
@@ -164,14 +230,19 @@ class ActiveDeliveryMapController extends ChangeNotifier {
     _customerLocationApproximate = customerLocationMissing;
     _phase = nextPhase;
 
-    _markers = _buildMarkers(
-      rider: _riderPosition,
-      store: resolvedStore,
-      customer: resolvedCustomer,
-    );
-    _phaseBounds = Geo.boundsOf(_riderPosition, destination);
+    _recomputeStops();
+    _markers = <String, MarkerEntry>{
+      ..._buildMarkers(
+        rider: _riderPosition,
+        store: resolvedStore,
+        customer: resolvedCustomer,
+      ),
+      ..._buildStopMarkers(),
+    };
+    _recomputeRoute();
+    _phaseBounds = _computePhaseBounds(_riderPosition, _plannedDestinations);
     _recomputeDistanceAndEta();
-    _polylines = _buildPolylinesFromCache();
+    _polylines = _buildPolylinesFromLegs();
 
     if (orderChanged) {
       _showRecenterButton = false;
@@ -179,9 +250,9 @@ class ActiveDeliveryMapController extends ChangeNotifier {
 
     notifyListeners();
 
-    // Fire-and-forget road-route fetch; updates the polyline when
-    // OSRM responds.
-    unawaited(_refreshRoute(_riderPosition, destination));
+    // Fire-and-forget road-route fetch; updates the polyline as OSRM
+    // resolves each leg.
+    unawaited(_maybeRefreshLegs());
   }
 
   void updateRiderPosition(GeoPoint next) {
@@ -192,68 +263,185 @@ class ActiveDeliveryMapController extends ChangeNotifier {
     }
     _riderPosition = next;
 
-    final GeoPoint? destination = _resolveDestinationForPhase();
-    _markers = _buildMarkers(
-      rider: next,
-      store: _storePosition,
-      customer: _customerPosition,
-    );
-    _phaseBounds = Geo.boundsOf(next, destination);
+    _recomputeStops();
+    _markers = <String, MarkerEntry>{
+      ..._buildMarkers(
+        rider: next,
+        store: _storePosition,
+        customer: _customerPosition,
+      ),
+      ..._buildStopMarkers(),
+    };
+    _recomputeRoute();
+    _phaseBounds = _computePhaseBounds(next, _plannedDestinations);
     _recomputeDistanceAndEta();
-    _polylines = _buildPolylinesFromCache();
+    _polylines = _buildPolylinesFromLegs();
     notifyListeners();
 
-    // Re-fetch the road route only if the rider has drifted far
-    // enough from the previous origin (saves OSRM round-trips).
-    if (destination != null) {
-      final GeoPoint? lastFrom = _routeFrom;
-      final GeoPoint? lastTo = _routeTo;
-      final bool destChanged = lastTo == null || lastTo != destination;
-      final bool riderDrifted = lastFrom == null ||
-          Geo.distanceMeters(lastFrom, next) >= _routeRefetchThresholdMeters;
-      if (destChanged || riderDrifted) {
-        unawaited(_refreshRoute(next, destination));
-      }
-    }
+    unawaited(_maybeRefreshLegs());
   }
 
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
 
-  GeoPoint? _resolveDestinationForPhase() {
+  /// The ordered list of places the rider still has to physically go —
+  /// the input to route-leg computation. Single-order trips (or the
+  /// store-bound `toStore` phase, where there's only ever one shared
+  /// pickup point) collapse to a single-element list, so the leg
+  /// machinery below is exactly the old single-destination behavior in
+  /// that case. During `toCustomer` with more than one in-transit
+  /// order, this is the full nearest-neighbor sequence from [_stops].
+  List<GeoPoint> get _plannedDestinations {
     switch (_phase) {
       case LocationPhase.toStore:
-        return _storePosition;
+        final GeoPoint? store = _storePosition;
+        return store == null ? const <GeoPoint>[] : <GeoPoint>[store];
       case LocationPhase.toCustomer:
-        return _customerPosition;
+        if (_stops.length > 1) {
+          return _stops
+              .map((DeliveryStopInfo s) => s.position)
+              .toList(growable: false);
+        }
+        final GeoPoint? customer = _customerPosition;
+        return customer == null ? const <GeoPoint>[] : <GeoPoint>[customer];
       case LocationPhase.none:
-        return null;
+        return const <GeoPoint>[];
     }
   }
 
-  Future<void> _refreshRoute(GeoPoint? from, GeoPoint? to) async {
-    if (from == null || to == null || _phase == LocationPhase.none) {
-      _routePoints = const <GeoPoint>[];
-      _routeFrom = null;
-      _routeTo = null;
-      _polylines = _buildPolylinesFromCache();
-      notifyListeners();
+  /// Rebuilds [_legs] for the current rider position / planned stops,
+  /// reusing already-fetched road points for any leg whose endpoints
+  /// haven't changed (so a GPS tick doesn't flash the polyline back to
+  /// a straight line every time). New/changed legs start as straight-
+  /// line placeholders until [_maybeRefreshLegs] resolves them.
+  void _recomputeRoute() {
+    final GeoPoint? rider = _riderPosition;
+    final List<GeoPoint> destinations = _plannedDestinations;
+    if (rider == null || destinations.isEmpty) {
+      _legs = const <_RouteLeg>[];
       return;
     }
-    final List<GeoPoint> route = await _routeService.getRoute(from, to);
-    // Discard stale results (rider may have moved on or accepted a
-    // different order while OSRM was thinking).
-    if (_phase == LocationPhase.none) return;
-    final GeoPoint? currentDest = _resolveDestinationForPhase();
-    if (currentDest == null || currentDest != to) return;
 
-    _routePoints = route;
-    _routeFrom = from;
-    _routeTo = to;
-    _polylines = _buildPolylinesFromCache();
+    final List<GeoPoint> points = <GeoPoint>[rider, ...destinations];
+    final List<_RouteLeg> next = <_RouteLeg>[];
+    for (int i = 0; i < points.length - 1; i++) {
+      final GeoPoint from = points[i];
+      final GeoPoint to = points[i + 1];
+      final _RouteLeg? existing = i < _legs.length ? _legs[i] : null;
+      final bool reusable =
+          existing != null && existing.from == from && existing.to == to;
+      next.add(
+        _RouteLeg(
+          from: from,
+          to: to,
+          points: reusable ? existing.points : <GeoPoint>[from, to],
+        ),
+      );
+    }
+    _legs = next;
+  }
+
+  /// Fetches real road-snapped geometry for every leg in [_legs],
+  /// skipped entirely when neither the destination plan nor the
+  /// rider's position has meaningfully changed since the last fetch
+  /// (mirrors the old single-leg drift/dest-change guard).
+  Future<void> _maybeRefreshLegs() async {
+    final GeoPoint? rider = _riderPosition;
+    final List<GeoPoint> destinations = _plannedDestinations;
+    if (rider == null || destinations.isEmpty) {
+      _legsFetchOrigin = null;
+      _legsFetchDestinations = const <GeoPoint>[];
+      return;
+    }
+
+    final bool destinationsChanged =
+        !listEquals(_legsFetchDestinations, destinations);
+    final bool riderDrifted = _legsFetchOrigin == null ||
+        Geo.distanceMeters(_legsFetchOrigin!, rider) >=
+            _routeRefetchThresholdMeters;
+    if (!destinationsChanged && !riderDrifted) return;
+
+    final int token = ++_legsFetchToken;
+    _legsFetchOrigin = rider;
+    _legsFetchDestinations = List<GeoPoint>.of(destinations);
+
+    final List<GeoPoint> points = <GeoPoint>[rider, ...destinations];
+    final List<List<GeoPoint>> fetched = await Future.wait(<Future<List<GeoPoint>>>[
+      for (int i = 0; i < points.length - 1; i++)
+        _routeService.getRoute(points[i], points[i + 1]),
+    ]);
+
+    // A newer fetch superseded this one (plan or position changed again
+    // while OSRM was thinking) — discard rather than clobber fresher state.
+    if (token != _legsFetchToken) return;
+
+    _legs = <_RouteLeg>[
+      for (int i = 0; i < points.length - 1; i++)
+        _RouteLeg(from: points[i], to: points[i + 1], points: fetched[i]),
+    ];
     _recomputeDistanceAndEta();
+    _polylines = _buildPolylinesFromLegs();
     notifyListeners();
+  }
+
+  /// Re-sequences [_lastBatch]'s in-transit orders into a real
+  /// nearest-neighbor route from [_riderPosition] into [_stops] (item
+  /// 8/9) — "closest stop first, then closest *from there*," not just a
+  /// flat ranking by distance from one fixed point. Orders whose
+  /// customer coordinates aren't geocoded yet are left out — there's
+  /// nothing useful to plot or rank for them.
+  void _recomputeStops() {
+    final List<DeliveryOrder> inTransit = _lastBatch
+        .where(
+          (DeliveryOrder o) =>
+              o.assignmentStatus == AssignmentStatus.inTransit &&
+              o.customerPoint != null,
+        )
+        .toList();
+    final List<DeliveryOrder> sequenced =
+        DeliveryOrder.sequenceRoute(inTransit, _riderPosition);
+
+    final List<DeliveryStopInfo> next = <DeliveryStopInfo>[];
+    for (int i = 0; i < sequenced.length; i++) {
+      final DeliveryOrder order = sequenced[i];
+      final GeoPoint position = order.customerPoint!;
+      next.add(
+        DeliveryStopInfo(
+          order: order,
+          position: position,
+          rank: i + 1,
+          isFocused: order.orderId == _currentOrderId,
+          distanceMeters: _riderPosition == null
+              ? null
+              : Geo.distanceMeters(_riderPosition!, position),
+        ),
+      );
+    }
+    _stops = next;
+  }
+
+  /// Numbered pins for every stop in [_stops] except the focused one —
+  /// that destination already has its own black "customer" marker.
+  Map<String, MarkerEntry> _buildStopMarkers() {
+    final Map<String, MarkerEntry> out = <String, MarkerEntry>{};
+    for (final DeliveryStopInfo stop in _stops) {
+      if (stop.isFocused) continue;
+      final String key = 'stop:${stop.order.orderId}';
+      out[key] = MarkerEntry(
+        id: key,
+        position: stop.position,
+        marker: fm.Marker(
+          key: ValueKey<String>(key),
+          point: stop.position.toLatLng(),
+          width: MarkerAssets.otherSizeDp,
+          height: MarkerAssets.otherSizeDp,
+          alignment: Alignment.center,
+          child: _markerAssets.stopMarker(stop.rank),
+        ),
+      );
+    }
+    return out;
   }
 
   Map<String, MarkerEntry> _buildMarkers({
@@ -307,18 +495,26 @@ class ActiveDeliveryMapController extends ChangeNotifier {
     return out;
   }
 
-  List<fm.Polyline> _buildPolylinesFromCache() {
-    if (_phase == LocationPhase.none) return const <fm.Polyline>[];
-    final GeoPoint? rider = _riderPosition;
-    final GeoPoint? dest = _resolveDestinationForPhase();
-    if (rider == null || dest == null) return const <fm.Polyline>[];
+  /// Concatenates every leg in [_legs] into one continuous polyline —
+  /// the rider's full planned journey (rider → stop 1 → stop 2 → …),
+  /// not just the next hop. Adjacent legs share an endpoint, so that
+  /// shared point is only emitted once.
+  List<fm.Polyline> _buildPolylinesFromLegs() {
+    if (_legs.isEmpty) return const <fm.Polyline>[];
 
-    final List<GeoPoint> points = _routePoints.length >= 2
-        ? _routePoints
-        : <GeoPoint>[rider, dest];
+    final List<GeoPoint> combined = <GeoPoint>[];
+    for (final _RouteLeg leg in _legs) {
+      if (leg.points.isEmpty) continue;
+      if (combined.isNotEmpty && leg.points.first == combined.last) {
+        combined.addAll(leg.points.skip(1));
+      } else {
+        combined.addAll(leg.points);
+      }
+    }
+    if (combined.length < 2) return const <fm.Polyline>[];
 
     final List<ll.LatLng> latLngs =
-        points.map((GeoPoint p) => p.toLatLng()).toList(growable: false);
+        combined.map((GeoPoint p) => p.toLatLng()).toList(growable: false);
 
     return <fm.Polyline>[
       // Soft white halo so the route stays readable on busy tiles.
@@ -335,17 +531,47 @@ class ActiveDeliveryMapController extends ChangeNotifier {
     ];
   }
 
+  /// Bounding box around the rider and every planned destination, so
+  /// the camera can fit the *whole* route on screen when it's freshly
+  /// computed (item: "rider can see what route they follow" at accept
+  /// time) — not just the rider and the immediate next stop.
+  GeoBounds? _computePhaseBounds(GeoPoint? rider, List<GeoPoint> destinations) {
+    final List<GeoPoint> points = <GeoPoint>[
+      ?rider,
+      ...destinations,
+    ];
+    if (points.isEmpty) return null;
+    if (points.length == 1) return Geo.inflatePoint(points.first);
+
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
+    for (final GeoPoint p in points.skip(1)) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+    return GeoBounds(
+      southwest: GeoPoint(minLat, minLng),
+      northeast: GeoPoint(maxLat, maxLng),
+    );
+  }
+
+  /// Distance/ETA reflect the *immediate next leg* only (rider → the
+  /// closest upcoming stop) — what the top-bar stat is actually for —
+  /// even when [_legs] holds the rider's whole multi-stop plan.
   void _recomputeDistanceAndEta() {
-    final GeoPoint? rider = _riderPosition;
-    final GeoPoint? dest = _resolveDestinationForPhase();
-    if (rider == null || dest == null) {
+    if (_legs.isEmpty) {
       _distanceMeters = null;
       _etaMinutes = null;
       return;
     }
-    final double meters = _routePoints.length >= 2
-        ? _polylineLengthMeters(_routePoints)
-        : Geo.distanceMeters(rider, dest);
+    final _RouteLeg firstLeg = _legs.first;
+    final double meters = firstLeg.points.length >= 2
+        ? _polylineLengthMeters(firstLeg.points)
+        : Geo.distanceMeters(firstLeg.from, firstLeg.to);
     _distanceMeters = meters;
     final double minutes = (meters / 1000.0) / _averageSpeedKmh * 60.0;
     _etaMinutes = minutes < 1 ? 1 : minutes.ceil().clamp(1, 999);

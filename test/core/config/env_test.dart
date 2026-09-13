@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:grolin_rider_app/core/config/env.dart';
-import 'package:grolin_rider_app/core/config/flavor.dart';
+import 'package:bakaloo_rider_app/core/config/env.dart';
+import 'package:bakaloo_rider_app/core/config/flavor.dart';
 
 /// Unit tests for the environment configuration value object.
 ///
